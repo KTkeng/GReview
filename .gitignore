@@ -1,0 +1,24 @@
+# Workflow scratch space
+.greview/
+.greview-tmp/
+
+# Dependencies & builds
+node_modules/
+dist/
+build/
+.next/
+out/
+
+# Local data & caches
+.cache/
+data/
+coverage/
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Pipeline acceptance reports
+reports/
