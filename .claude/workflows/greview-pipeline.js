@@ -480,7 +480,7 @@ const backendArch = await askGpt6({
   phaseName: 'Contract',
   instruction: backendInstruction,
   context: `需求原文：\n${requirement}`,
-  maxTokens: 4000,
+  maxTokens: 8000,
 })
 
 if (!backendArch.ok || !backendArch.parsed) {
