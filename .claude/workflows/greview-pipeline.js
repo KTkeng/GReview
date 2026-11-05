@@ -327,8 +327,8 @@ function fableWrapperPrompt({ instruction, context, contextPath, instructionPath
 1) 用 Bash 运行：mkdir -p "${workDir}"
 2) 用 Write 工具把下方 <<<INSTRUCTION>>> 与 <<<END INSTRUCTION>>> 之间的内容【逐字原样】写入文件：
    ${instructionPath}
-${writeContext}4) 用 Bash 运行：
-   node "${fableBridgePath}" --prompt-file "${instructionPath}" ${contextArgs.join(' ')} --json --json-mode --max-tokens ${maxTokens}
+${writeContext}4) 用 Bash 运行（把 Bash 工具 timeout 设为 600000 毫秒）：
+   node "${fableBridgePath}" --prompt-file "${instructionPath}" ${contextArgs.join(' ')} --timeout-ms 600000 --json --json-mode --max-tokens ${maxTokens}
 5) 该命令会输出一行 JSON（形如 {"ok":true,"content":"..."}）。
    - 成功：返回 { ok: true, content: <content 字段原文>, error: "" }
    - 失败：返回 { ok: false, content: "", error: <命令输出中的 error> }
@@ -501,12 +501,14 @@ const contractResult = await askFable({
 要求：
 1. 后端 apiContract 以 GPT-6 方案为准，不得擅自改动路径/字段；如前端有额外需求，写入 integrationNotes 或 openQuestions；
 2. frontendPlan 要整合设计稿与 API 契约，明确数据如何流入组件；
-3. 不要写文件，只返回 JSON。
+3. 不要写文件，只返回 JSON；
+4. 保持简洁：summary ≤120 字；frontendPlan ≤300 字；backendPlan ≤300 字；apiContract 最多 20 条；integrationNotes 最多 8 条；openQuestions 最多 8 条。
 
 输出严格 JSON（不要 Markdown 代码块），结构必须匹配以下 JSON Schema：
 ${JSON.stringify(CONTRACT_DATA_SCHEMA, null, 2)}`,
   context: JSON.stringify({ requirement, design, gpt6BackendPlan: backendPlan }, null, 2),
-  maxTokens: 16000,
+  maxTokens: 8000,
+  includeSpec: false,
 })
 
 const contractData = contractResult.parsed
@@ -671,6 +673,7 @@ ${specPath ? `设计文档：${specPath}。请把设计文档中与后端相关�
 ${reviewJsonBlock()}`,
     contextFiles: [packet.packetPath, contract.contractPath],
     maxTokens: 3000,
+    includeSpec: false,
   })
 
   const reviewData = review.parsed
@@ -781,6 +784,7 @@ ${JSON.stringify(ACCEPTANCE_SCHEMA, null, 2)}
 存在 blocker/major 时必须 revise；只有 minor 时可 accept，但仍需列出。`,
     contextFiles: [packet.packetPath, contract.contractPath],
     maxTokens: 12000,
+    includeSpec: false,
   })
 
   const acceptance = acceptResult.parsed
