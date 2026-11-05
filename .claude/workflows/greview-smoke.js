@@ -10,9 +10,9 @@ export const meta = {
   ],
 }
 
-const MODEL_FABLE = 'ccs-claude-claude--claude-fable-5'
-const MODEL_DEEPSEEK = 'ccs-claude-deepseek--deepseek-flash[1M]'
-const BRIDGE = 'D:/GReview/tools/gpt6-bridge.mjs'
+const MODEL_DEEPSEEK = 'deepseek-flash'
+const GPT6_BRIDGE = 'D:/GReview/tools/gpt6-bridge.mjs'
+const FABLE_BRIDGE = 'D:/GReview/tools/fable-bridge.mjs'
 const TMP_DIR = 'D:/GReview/.greview-tmp'
 
 const SPEC_SCHEMA = {
@@ -83,7 +83,7 @@ function bridgeWrapperPrompt({ instruction, context, instructionPath, contextPat
 3) 用 Write 工具把下方 <<<CONTEXT>>> 与 <<<END CONTEXT>>> 之间的内容【逐字原样】写入文件：
    ${contextPath}
 4) 用 Bash 运行：
-   node "${BRIDGE}" --prompt-file "${instructionPath}" --prompt-file "${contextPath}" --json --json-mode --max-tokens ${maxTokens}
+   node "${GPT6_BRIDGE}" --prompt-file "${instructionPath}" --prompt-file "${contextPath}" --json --json-mode --max-tokens ${maxTokens}
 5) 该命令会输出一行 JSON（形如 {"ok":true,"content":"..."}）。
    - 成功：返回 { ok: true, content: <content 字段原文>, error: "" }
    - 失败：返回 { ok: false, content: "", error: <命令输出中的 error> }
@@ -101,24 +101,113 @@ ${context}
 `
 }
 
+function safeTag(label) {
+  return String(label).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 60)
+}
+
+function fableWrapperPrompt({ instruction, context, instructionPath, contextPath, maxTokens, tag }) {
+  return `你是 Claude Fable 5 的传输代理（transport wrapper）。你自己不要做任何设计、评审、改写或补充。
+
+步骤：
+1) 用 Bash 运行：mkdir -p "${TMP_DIR}"
+2) 用 Write 工具把下方 <<<INSTRUCTION>>> 与 <<<END INSTRUCTION>>> 之间的内容【逐字原样】写入文件：
+   ${instructionPath}
+3) 用 Write 工具把下方 <<<CONTEXT>>> 与 <<<END CONTEXT>>> 之间的内容【逐字原样】写入文件：
+   ${contextPath}
+4) 用 Bash 运行：
+   node "${FABLE_BRIDGE}" --prompt-file "${instructionPath}" --prompt-file "${contextPath}" --json --json-mode --max-tokens ${maxTokens}
+5) 该命令会输出一行 JSON（形如 {"ok":true,"content":"..."}）。
+   - 成功：返回 { ok: true, content: <content 字段原文>, error: "" }
+   - 失败：返回 { ok: false, content: "", error: <命令输出中的 error> }
+禁止改写、总结、翻译、评价 Fable 的输出；content 必须逐字复制。
+
+<<<INSTRUCTION>>>
+${instruction}
+<<<END INSTRUCTION>>>
+
+<<<CONTEXT>>>
+${context || ''}
+<<<END CONTEXT>>>
+
+本次传输标识：${tag}
+`
+}
+
+async function askFable({ label, phaseName, instruction, context, maxTokens, tag }) {
+  const safe = safeTag(tag || label)
+  const instructionPath = `${TMP_DIR}/smoke-fable-${safe}.instruction.md`
+  const contextPath = `${TMP_DIR}/smoke-fable-${safe}.context.md`
+  const wrapped = await agent(
+    fableWrapperPrompt({
+      instruction,
+      context: context || '',
+      instructionPath,
+      contextPath,
+      maxTokens: maxTokens || 6000,
+      tag: safe,
+    }),
+    { label: `fable:${safe}`, phase: phaseName, model: MODEL_DEEPSEEK, effort: 'low', schema: BRIDGE_RESULT_SCHEMA }
+  )
+  const parsed = wrapped && wrapped.ok ? parseLooseJson(wrapped.content) : null
+  return {
+    ok: Boolean(wrapped && wrapped.ok && parsed),
+    wrapped,
+    parsed,
+    raw: wrapped ? wrapped.content : '',
+    error: wrapped ? (wrapped.error || '') : 'Fable bridge wrapper 未返回结果',
+  }
+}
+
+function isSpec(obj) {
+  return Boolean(
+    obj &&
+    typeof obj.feature === 'string' &&
+    Array.isArray(obj.uiRequirements) &&
+    Array.isArray(obj.acceptanceCriteria) &&
+    Array.isArray(obj.apiExpectations)
+  )
+}
+
+function isAcceptance(obj) {
+  return Boolean(
+    obj &&
+    (obj.verdict === 'accept' || obj.verdict === 'revise') &&
+    Array.isArray(obj.passedCriteria) &&
+    Array.isArray(obj.gaps) &&
+    typeof obj.summary === 'string'
+  )
+}
+
 phase('Design')
 log('角色 1/3 · claude-fable-5 负责前端设计与验收标准')
 
-const spec = await agent(
-  `你是 claude-fable-5，负责前端界面设计与验收。当前是三模型流水线的冒烟验证：不构建真实项目、不写文件、不运行命令。
+const designResult = await askFable({
+  label: 'fable:design',
+  phaseName: 'Design',
+  instruction: `你是 claude-fable-5，负责前端界面设计与验收。当前是三模型流水线的冒烟验证：不构建真实项目、不写文件、不运行命令。
 
 需求：设计一个极简的「服务健康状态徽章」组件，数据来自后端 GET /api/health。
 
-请返回：
+输出严格 JSON（不要 Markdown 代码块），结构必须匹配以下 JSON Schema：
+${JSON.stringify(SPEC_SCHEMA, null, 2)}
+
+要求：
 - feature：一句话说明
 - uiRequirements：3-4 条界面/交互要求（含状态色与文案）
 - acceptanceCriteria：3-4 条可验证的验收标准
 - apiExpectations：2-3 条前端对后端接口的期望（路径、状态码、字段）`,
-  { label: 'fable:design', phase: 'Design', model: MODEL_FABLE, effort: 'medium', schema: SPEC_SCHEMA }
-)
+  maxTokens: 8000,
+  tag: 'design',
+})
 
-if (!spec) {
-  return { ok: false, error: 'Fable 设计阶段未返回结果', checks: { fableDesign: false } }
+const spec = designResult.parsed
+if (!designResult.ok || !isSpec(spec)) {
+  return {
+    ok: false,
+    error: 'Fable 设计阶段未返回可解析结果',
+    detail: designResult.error || String(designResult.raw || '').slice(0, 2000),
+    checks: { fableDesign: false },
+  }
 }
 
 phase('Implement')
@@ -174,23 +263,26 @@ const review = bridged && bridged.ok ? parseLooseJson(bridged.content) : null
 phase('Accept')
 log('角色 1/3 · claude-fable-5 给出最终验收结论')
 
-const acceptance = await agent(
-  `你是 claude-fable-5，前端验收负责人。当前是冒烟验证：不写文件、不运行命令。
+const acceptResult = await askFable({
+  label: 'fable:accept',
+  phaseName: 'Accept',
+  instruction: `你是 claude-fable-5，前端验收负责人。当前是冒烟验证：不写文件、不运行命令。
 
 请对照规格中的 acceptanceCriteria，并参考 GPT-6 的审查意见，判断这份实现是否可接受。
 
-规格：
-${JSON.stringify(spec, null, 2)}
+输出严格 JSON（不要 Markdown 代码块），结构必须匹配以下 JSON Schema：
+${JSON.stringify(ACCEPT_SCHEMA, null, 2)}
 
-DeepSeek 实现：
-${JSON.stringify(implementation, null, 2)}
+要求：verdict 只能是 accept/revise；passedCriteria 与 gaps 为字符串数组；summary 为一句话中文结论。`,
+  context: JSON.stringify({ spec, implementation, gpt6Review: review }, null, 2),
+  maxTokens: 10000,
+  tag: 'accept',
+})
 
-GPT-6 审查（原始 JSON，若为 null 表示 bridge 失败）：
-${review ? JSON.stringify(review, null, 2) : 'null'}
-
-返回 verdict（accept/revise）、passedCriteria、gaps、summary。`,
-  { label: 'fable:accept', phase: 'Accept', model: MODEL_FABLE, effort: 'medium', schema: ACCEPT_SCHEMA }
-)
+const acceptance = acceptResult.parsed
+if (!acceptResult.ok || !isAcceptance(acceptance)) {
+  log('Fable 验收返回不可解析，冒烟将标记为未通过')
+}
 
 const checks = {
   fableDesign: Boolean(spec),
