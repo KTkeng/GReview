@@ -133,6 +133,8 @@ Workflow({
 
 ## GPT-6 Bridge
 
+GPT-6 默认使用简体中文回复；JSON 字段名与提示词指定的枚举值保持英文，其余字段值用中文。
+
 ```bash
 # 最小连通性测试
 node tools/gpt6-bridge.mjs --probe --json

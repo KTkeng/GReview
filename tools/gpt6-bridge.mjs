@@ -192,8 +192,10 @@ function buildPrompt(opts) {
   return parts.join('\n\n');
 }
 
+const DEFAULT_SYSTEM_PROMPT = '始终使用简体中文回复。JSON 字段名保持英文；提示词明确指定的枚举值（如 approve/revise、blocker/major/minor）保持英文，其余字段值使用简体中文。';
+
 function buildSystem(opts) {
-  const parts = [];
+  const parts = [DEFAULT_SYSTEM_PROMPT];
   for (const p of opts.systemParts) parts.push(p);
   for (const f of opts.systemFiles) {
     const abs = path.resolve(f);
