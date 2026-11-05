@@ -1,7 +1,7 @@
 export const meta = {
   name: 'greview-pipeline',
   description: 'Fable 前端设计/验收 + GPT-6 后端监督 + DeepSeek 实现的三模型开发流水线',
-  whenToUse: '传入需求规格后，由 claude-fable-5 负责前端设计与最终验收、gpt-6-astra 负责后端架构与实现监督、deepseek-v4.1-flash 负责具体编码与修复',
+  whenToUse: '传入需求规格后，由 claude-fable-5（经 fable-bridge）负责前端设计与最终验收、gpt-6-astra 负责后端架构与实现监督、deepseek-flash 负责具体编码与修复',
   phases: [
     { title: 'Contract', detail: 'Fable 前端设计 + GPT-6 后端架构，合并为契约' },
     { title: 'Build', detail: 'DeepSeek 实现后端与前端并集成' },
@@ -11,14 +11,19 @@ export const meta = {
   ],
 }
 
-const MODEL_FABLE = 'ccs-claude-claude--claude-fable-5'
-const MODEL_DEEPSEEK = 'ccs-claude-deepseek--deepseek-flash[1M]'
+const MODEL_DEEPSEEK = 'deepseek-flash'
+const FABLE_MODEL = 'claude-fable-5'
 
 const input = (typeof args === 'object' && args !== null) ? args : { requirement: typeof args === 'string' ? args : '' }
 const requirement = String(input.requirement || input.spec || '').trim()
 const projectRoot = String(input.projectRoot || 'D:/GReview').replace(/\/+$/, '')
 const workDir = `${projectRoot}/.greview`
 const bridgePath = input.bridgePath || 'D:/GReview/tools/gpt6-bridge.mjs'
+const fableBridgePath = input.fableBridgePath || 'D:/GReview/tools/fable-bridge.mjs'
+const specPath = String(input.specPath || '').trim()
+const specHint = specPath
+  ? `设计文档：${specPath}。实现前先阅读设计文档；契约是摘要，冲突时以设计文档为准。`
+  : '设计文档：需求描述即规格。'
 const stackHint = String(input.stack || '未指定。由架构阶段选择成熟、可测试、依赖少的方案。')
 const maxRounds = Math.min(Math.max(Number(input.maxRounds) || 3, 1), 5)
 const frontendDir = String(input.frontendDir || 'web')
@@ -115,6 +120,29 @@ const CONTRACT_SCHEMA = {
     designPath: { type: 'string' },
   },
   required: ['summary', 'frontendPlan', 'backendPlan', 'apiContract', 'integrationNotes', 'openQuestions', 'contractPath', 'designPath'],
+}
+
+const CONTRACT_DATA_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string' },
+    frontendPlan: { type: 'string' },
+    backendPlan: { type: 'string' },
+    apiContract: { type: 'array', items: { type: 'string' } },
+    integrationNotes: { type: 'array', items: { type: 'string' } },
+    openQuestions: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['summary', 'frontendPlan', 'backendPlan', 'apiContract', 'integrationNotes', 'openQuestions'],
+}
+
+const WRITE_RESULT_SCHEMA = {
+  type: 'object',
+  properties: {
+    contractPath: { type: 'string' },
+    designPath: { type: 'string' },
+    summary: { type: 'string' },
+  },
+  required: ['contractPath', 'designPath', 'summary'],
 }
 
 const BUILD_SCHEMA = {
@@ -250,16 +278,18 @@ ${contextSection}
 `
 }
 
-async function askGpt6({ label, phaseName, instruction, context, contextFiles, maxTokens }) {
+async function askGpt6({ label, phaseName, instruction, context, contextFiles, maxTokens, includeSpec = true }) {
   const tag = safeLabel(label)
   const instructionPath = `${workDir}/gpt6-${tag}.instruction.md`
   const contextPath = context != null ? `${workDir}/gpt6-${tag}.context.md` : null
+  const extraFiles = [...(contextFiles || [])]
+  if (includeSpec && specPath) extraFiles.push(specPath)
   const wrapperPrompt = bridgeWrapperPrompt({
     instruction,
     context,
     contextPath,
     instructionPath,
-    extraFiles: contextFiles || [],
+    extraFiles,
     maxTokens: maxTokens || 3000,
     tag,
   })
@@ -280,6 +310,110 @@ async function askGpt6({ label, phaseName, instruction, context, contextFiles, m
   }
 }
 
+function fableWrapperPrompt({ instruction, context, contextPath, instructionPath, extraFiles, maxTokens, tag }) {
+  const writeContext = context != null
+    ? `3) 用 Write 工具把下方 <<<CONTEXT>>> 与 <<<END CONTEXT>>> 之间的内容【逐字原样】写入文件：\n   ${contextPath}\n`
+    : ''
+  const contextSection = context != null
+    ? `\n<<<CONTEXT>>>\n${context}\n<<<END CONTEXT>>>\n`
+    : ''
+  const contextArgs = []
+  if (context != null) contextArgs.push(`--prompt-file "${contextPath}"`)
+  for (const f of extraFiles || []) contextArgs.push(`--prompt-file "${f}"`)
+
+  return `你是 Claude Fable 5 的传输代理（transport wrapper）。你自己不要做任何设计、评审、分析、改写或补充。
+
+步骤：
+1) 用 Bash 运行：mkdir -p "${workDir}"
+2) 用 Write 工具把下方 <<<INSTRUCTION>>> 与 <<<END INSTRUCTION>>> 之间的内容【逐字原样】写入文件：
+   ${instructionPath}
+${writeContext}4) 用 Bash 运行：
+   node "${fableBridgePath}" --prompt-file "${instructionPath}" ${contextArgs.join(' ')} --json --json-mode --max-tokens ${maxTokens}
+5) 该命令会输出一行 JSON（形如 {"ok":true,"content":"..."}）。
+   - 成功：返回 { ok: true, content: <content 字段原文>, error: "" }
+   - 失败：返回 { ok: false, content: "", error: <命令输出中的 error> }
+禁止改写、总结、翻译、评价 Fable 的输出；content 必须逐字复制。
+
+<<<INSTRUCTION>>>
+${instruction}
+<<<END INSTRUCTION>>>
+${contextSection}
+本次传输标识：${tag}
+`
+}
+
+async function askFable({ label, phaseName, instruction, context, contextFiles, maxTokens, includeSpec = true }) {
+  const tag = safeLabel(label)
+  const instructionPath = `${workDir}/fable-${tag}.instruction.md`
+  const contextPath = context != null ? `${workDir}/fable-${tag}.context.md` : null
+  const extraFiles = [...(contextFiles || [])]
+  if (includeSpec && specPath) extraFiles.push(specPath)
+  const wrapperPrompt = fableWrapperPrompt({
+    instruction,
+    context,
+    contextPath,
+    instructionPath,
+    extraFiles,
+    maxTokens: maxTokens || 6000,
+    tag,
+  })
+  const bridged = await agent(wrapperPrompt, {
+    label: `fable:${tag}`,
+    phase: phaseName,
+    model: MODEL_DEEPSEEK,
+    effort: 'low',
+    schema: BRIDGE_RESULT_SCHEMA,
+  })
+  const parsed = bridged && bridged.ok ? parseLooseJson(bridged.content) : null
+  return {
+    ok: Boolean(bridged && bridged.ok && parsed),
+    bridged,
+    parsed,
+    raw: bridged ? bridged.content : '',
+    error: bridged ? (bridged.error || '') : 'Fable bridge wrapper 未返回结果',
+  }
+}
+
+function isDesign(obj) {
+  return Boolean(
+    obj &&
+    typeof obj.overview === 'string' &&
+    Array.isArray(obj.pages) &&
+    obj.pages.every(p => p && typeof p.name === 'string' && typeof p.purpose === 'string' &&
+      Array.isArray(p.components) && Array.isArray(p.states)) &&
+    obj.designTokens &&
+    Array.isArray(obj.designTokens.colors) &&
+    Array.isArray(obj.designTokens.typography) &&
+    Array.isArray(obj.designTokens.spacing) &&
+    Array.isArray(obj.acceptanceChecklist)
+  )
+}
+
+function isContractData(obj) {
+  return Boolean(
+    obj &&
+    typeof obj.summary === 'string' &&
+    typeof obj.frontendPlan === 'string' &&
+    typeof obj.backendPlan === 'string' &&
+    Array.isArray(obj.apiContract) &&
+    Array.isArray(obj.integrationNotes) &&
+    Array.isArray(obj.openQuestions)
+  )
+}
+
+function isAcceptance(obj) {
+  return Boolean(
+    obj &&
+    (obj.verdict === 'accept' || obj.verdict === 'revise') &&
+    Array.isArray(obj.passedCriteria) &&
+    Array.isArray(obj.findings) &&
+    obj.findings.every(f => f && ['blocker', 'major', 'minor'].includes(f.severity) &&
+      typeof f.issue === 'string' && typeof f.requiredChange === 'string') &&
+    Array.isArray(obj.evidence) &&
+    typeof obj.summary === 'string'
+  )
+}
+
 function reviewJsonBlock() {
   return `输出严格 JSON，不要输出 JSON 以外的任何文字：
 {"verdict":"approve"|"revise","findings":[{"severity":"blocker"|"major"|"minor","file":"相对路径","issue":"问题","requiredChange":"必须的修改"}],"summary":"一句话结论"}
@@ -291,8 +425,10 @@ function reviewJsonBlock() {
 phase('Contract')
 log('阶段 1/5 · Fable 负责前端设计，GPT-6 负责后端架构')
 
-const design = await agent(
-  `你是 claude-fable-5，负责前端界面设计与最终验收。请为下面的需求产出可执行的前端设计方案。
+const designResult = await askFable({
+  label: 'fable:design',
+  phaseName: 'Contract',
+  instruction: `你是 claude-fable-5，负责前端界面设计与最终验收。请为下面的需求产出可执行的前端设计方案。
 
 需求：
 ${requirement}
@@ -305,14 +441,20 @@ ${requirement}
 - 页面/组件拆分要能直接指导实现；
 - designTokens 给出具体颜色值、字体、间距；
 - acceptanceChecklist 必须可验证（可观察、可断言），不要写"体验良好"这类空话；
-- 只做设计，不写实现代码。
+- 只做设计，不写实现代码；不要写文件，只返回 JSON。
 
-返回结构化结果。`,
-  { label: 'fable:design', phase: 'Contract', model: MODEL_FABLE, effort: 'high', schema: DESIGN_SCHEMA }
-)
+输出严格 JSON（不要 Markdown 代码块），结构必须匹配以下 JSON Schema：
+${JSON.stringify(DESIGN_SCHEMA, null, 2)}`,
+  maxTokens: 12000,
+})
 
-if (!design) {
-  return { ok: false, error: 'Fable 前端设计阶段失败（agent 返回 null）' }
+const design = designResult.parsed
+if (!designResult.ok || !isDesign(design)) {
+  return {
+    ok: false,
+    error: 'Fable 前端设计阶段失败',
+    detail: designResult.error || String(designResult.raw || '').slice(0, 2000),
+  }
 }
 
 const backendInstruction = `你是 GPT-6 Astra，负责后端架构与实现监督。请基于需求给出可执行的后端方案。
@@ -351,32 +493,53 @@ if (!backendArch.ok || !backendArch.parsed) {
 
 const backendPlan = backendArch.parsed
 
-const contract = await agent(
-  `你是 claude-fable-5，负责前端设计，并作为设计与后端契约的对齐者。请把前端设计与 GPT-6 后端方案合并为一份实现契约。
-
-需求：
-${requirement}
-
-前端设计（JSON）：
-${JSON.stringify(design, null, 2)}
-
-后端方案（GPT-6，JSON）：
-${JSON.stringify(backendPlan, null, 2)}
+const contractResult = await askFable({
+  label: 'fable:contract',
+  phaseName: 'Contract',
+  instruction: `你是 claude-fable-5，负责前端设计，并作为设计与后端契约的对齐者。请把上下文中的前端设计与 GPT-6 后端方案合并为一份实现契约。
 
 要求：
 1. 后端 apiContract 以 GPT-6 方案为准，不得擅自改动路径/字段；如前端有额外需求，写入 integrationNotes 或 openQuestions；
 2. frontendPlan 要整合设计稿与 API 契约，明确数据如何流入组件；
-3. 用 Write 工具创建目录并写两个文件：
-   - ${workDir}/contract.json ：完整契约（可自包含，包含 design、backendPlan、apiContract、integrationNotes）
-   - ${workDir}/contract.md ：人类可读版本
-4. 返回 contractPath（.json）与 designPath（.md）的绝对路径。
+3. 不要写文件，只返回 JSON。
 
-返回结构化结果。`,
-  { label: 'fable:contract', phase: 'Contract', model: MODEL_FABLE, effort: 'high', schema: CONTRACT_SCHEMA }
+输出严格 JSON（不要 Markdown 代码块），结构必须匹配以下 JSON Schema：
+${JSON.stringify(CONTRACT_DATA_SCHEMA, null, 2)}`,
+  context: JSON.stringify({ requirement, design, gpt6BackendPlan: backendPlan }, null, 2),
+  maxTokens: 16000,
+})
+
+const contractData = contractResult.parsed
+if (!contractResult.ok || !isContractData(contractData)) {
+  return {
+    ok: false,
+    error: '契约合并阶段失败（Fable 返回不可解析）',
+    detail: contractResult.error || String(contractResult.raw || '').slice(0, 2000),
+  }
+}
+
+const contractWrite = await agent(
+  `你是 DeepSeek V4.1 Flash，负责把已对齐的契约落盘。工程根目录：${projectRoot}。
+
+请用 Write 工具创建目录并写两个文件：
+- ${workDir}/contract.json：自包含契约，至少包含 design、backendPlan（GPT-6 对象）、summary、frontendPlan、backendPlanText、apiContract、integrationNotes、openQuestions
+- ${workDir}/contract.md：人类可读版本，包含需求摘要、页面/组件、API 契约、数据模型、集成注意事项、开放问题
+
+数据：
+${JSON.stringify({ design, gpt6BackendPlan: backendPlan, contractData }, null, 2)}
+
+返回 contractPath（.json）与 designPath（.md）的绝对路径。`,
+  { label: 'deepseek:write-contract', phase: 'Contract', model: MODEL_DEEPSEEK, effort: 'medium', schema: WRITE_RESULT_SCHEMA }
 )
 
-if (!contract) {
-  return { ok: false, error: '契约合并阶段失败（Fable agent 返回 null）' }
+if (!contractWrite || !contractWrite.contractPath || !contractWrite.designPath) {
+  return { ok: false, error: '契约落盘阶段失败（DeepSeek 未返回路径）' }
+}
+
+const contract = {
+  ...contractData,
+  contractPath: contractWrite.contractPath,
+  designPath: contractWrite.designPath,
 }
 
 // ---------- Phase: Build ----------
@@ -385,6 +548,7 @@ phase('Build')
 log('阶段 2/5 · DeepSeek 负责具体实现（后端与前端并行，随后集成）')
 
 const buildBase = `你是 DeepSeek V4.1 Flash，负责具体实现。工程根目录：${projectRoot}。
+${specHint}
 只修改分配给你的目录，不要动另一个目录，不要删除测试，不要伪造命令输出。
 完成后必须真实运行构建/测试命令，并如实返回输出。`
 
@@ -468,6 +632,7 @@ while (backendRounds < maxRounds && backendStatus !== 'approved') {
 
   const packet = await agent(
     `你是 DeepSeek V4.1 Flash，负责为 GPT-6 后端监督准备审查包。工程根目录：${projectRoot}。
+${specPath ? `设计文档：${specPath}。请把设计文档中与后端相关的要求（尤其 §6.9、§8、§10、§12、§13）摘录进审查包。` : '设计文档：需求描述即规格。'}
 
 请收集并写入审查包文件 ${workDir}/backend-packet-r${backendRounds}.md：
 1. 变更概览：若存在 git 仓库，运行 git status --short 与 git diff --stat；否则列出 ${backendDir}/ 文件树（排除 node_modules、dist、build、.git）；
@@ -537,6 +702,7 @@ ${reviewJsonBlock()}`,
 
   const fix = await agent(
     `你是 DeepSeek V4.1 Flash，负责按 GPT-6 的监督意见修复后端。工程根目录：${projectRoot}，范围：${backendDir}/**。
+${specHint} 修复以设计文档和契约为准。
 
 GPT-6 审查结论（JSON）：
 ${JSON.stringify(reviewData, null, 2)}
@@ -572,36 +738,68 @@ const frontendHistory = []
 while (frontendRounds < maxRounds && frontendStatus !== 'accepted') {
   frontendRounds++
 
-  const acceptance = await agent(
-    `你是 claude-fable-5，前端验收负责人。工程根目录：${projectRoot}，前端目录：${frontendDir}。
+  const packet = await agent(
+    `你是 DeepSeek V4.1 Flash，负责为 Fable 前端验收准备验收包。工程根目录：${projectRoot}，前端目录：${frontendDir}。
+${specPath ? `设计文档：${specPath}。请把设计文档中与前端相关的要求（尤其 §6、§9、§11、§13）摘录进验收包。` : '设计文档：需求描述即规格。'}
 
-验收依据：
-- 前端设计（JSON）：
-${JSON.stringify(design, null, 2)}
-- 契约（JSON）：
-${JSON.stringify(contract, null, 2)}
-- 最近一次集成结果：
-${JSON.stringify(integration, null, 2)}
+请写入 ${workDir}/frontend-packet-r${frontendRounds}.md：
+1. 验收依据：读取 ${workDir}/contract.json，提取 design、apiContract、integrationNotes、acceptanceChecklist，并摘录到验收包。
+2. 前端源码：读取 ${frontendDir}/ 下源码与样式（排除 node_modules、dist、build、.git；单文件超过 40KB 只保留前 40KB；总量约 120KB），按文件路径分节粘贴。
+3. 构建与测试：运行前端构建命令（如 npm run build），粘贴真实 stdout/stderr（最多 8000 字符）。
+4. 静态一致性检查：前端请求路径/字段是否与契约一致。
+5. 已知风险。
 
-请执行验收：
-1. 阅读 ${frontendDir}/ 下的源码与样式，核对页面、组件、状态、designTokens；
-2. 运行前端构建命令（如 npm run build），确认真实通过；
-3. 如项目已有可用的本地预览方式且环境支持，可启动并用浏览器工具截图验证；若不可用，不要强行安装重型依赖，改为静态审查 + 构建验证；
-4. 对照 acceptanceChecklist 逐条判断；
-5. 检查与 API 契约的字段一致性（可结合后端源码或契约）。
+硬性要求：
+- 不得伪造命令输出；
+- 不得包含 .env、密钥、token、证书；
+- 验收包必须自足，Fable 不需要访问仓库即可评审。
 
-输出 verdict（accept/revise）、passedCriteria、findings（含 severity/file/issue/requiredChange）、evidence（真实命令或文件证据）、summary。
-存在 blocker/major 时必须 revise。`,
-    { label: `fable:accept-frontend-r${frontendRounds}`, phase: 'Frontend Acceptance', model: MODEL_FABLE, effort: 'high', schema: ACCEPTANCE_SCHEMA }
+完成后返回 packetPath、fileCount、byteCount、summary。`,
+    { label: `deepseek:collect-frontend-r${frontendRounds}`, phase: 'Frontend Acceptance', model: MODEL_DEEPSEEK, effort: 'medium', schema: PACKET_SCHEMA }
   )
 
-  if (!acceptance) {
+  if (!packet) {
     frontendStatus = 'error'
-    frontendHistory.push({ round: frontendRounds, error: 'Fable 验收 agent 返回 null' })
+    frontendHistory.push({ round: frontendRounds, error: '前端验收包收集失败' })
     break
   }
 
-  frontendHistory.push({ round: frontendRounds, acceptance })
+  const acceptResult = await askFable({
+    label: `fable:accept-frontend-r${frontendRounds}`,
+    phaseName: 'Frontend Acceptance',
+    instruction: `你是 claude-fable-5，前端验收负责人。工程根目录：${projectRoot}，前端目录：${frontendDir}。
+
+请依据验收包与契约执行验收：
+1. 对照 acceptanceChecklist 逐条判断；
+2. 核对页面、组件、状态、designTokens；
+3. 检查构建输出是否真实通过；
+4. 检查与 API 契约的字段一致性。
+
+输出严格 JSON（不要 Markdown 代码块），结构必须匹配以下 JSON Schema：
+${JSON.stringify(ACCEPTANCE_SCHEMA, null, 2)}
+
+存在 blocker/major 时必须 revise；只有 minor 时可 accept，但仍需列出。`,
+    contextFiles: [packet.packetPath, contract.contractPath],
+    maxTokens: 12000,
+  })
+
+  const acceptance = acceptResult.parsed
+  if (!acceptResult.ok || !isAcceptance(acceptance)) {
+    frontendStatus = 'error'
+    frontendHistory.push({
+      round: frontendRounds,
+      error: 'Fable 验收返回不可解析',
+      detail: acceptResult.error || String(acceptResult.raw || '').slice(0, 2000),
+      packet: { path: packet.packetPath, files: packet.fileCount, bytes: packet.byteCount },
+    })
+    break
+  }
+
+  frontendHistory.push({
+    round: frontendRounds,
+    packet: { path: packet.packetPath, files: packet.fileCount, bytes: packet.byteCount },
+    acceptance,
+  })
 
   if (acceptance.verdict === 'accept') {
     frontendStatus = 'accepted'
@@ -617,6 +815,7 @@ ${JSON.stringify(integration, null, 2)}
 
   const fix = await agent(
     `你是 DeepSeek V4.1 Flash，负责按 Fable 的验收意见修复前端。工程根目录：${projectRoot}，范围：${frontendDir}/**。
+${specHint} 修复以设计文档和契约为准。
 
 Fable 验收结论（JSON）：
 ${JSON.stringify(acceptance, null, 2)}
@@ -649,10 +848,11 @@ const overallOk = backendStatus === 'approved' && frontendStatus === 'accepted'
 
 const report = await agent(
   `你是 DeepSeek V4.1 Flash，负责汇总本次三模型流水线的验收报告。工程根目录：${projectRoot}。
+${specHint}
 
 请用 Write 工具创建 ${projectRoot}/reports/ 目录并写入 ${projectRoot}/reports/acceptance-report.md，内容包含：
 1. 需求摘要；
-2. 角色分工：claude-fable-5（前端设计/验收）、gpt-6-astra（后端架构/监督，经 tools/gpt6-bridge.mjs）、deepseek-v4.1-flash（实现/修复）；
+2. 角色分工：claude-fable-5（前端设计/验收，经 tools/fable-bridge.mjs）、gpt-6-astra（后端架构/监督，经 tools/gpt6-bridge.mjs）、deepseek-flash（实现/修复）；
 3. 契约与产物路径；
 4. 后端监督过程：每轮 verdict 与关键 findings；
 5. 前端验收过程：每轮 verdict、passedCriteria、gaps；
@@ -678,9 +878,9 @@ return {
   requirement,
   projectRoot,
   roles: {
-    designerAndAcceptor: 'claude-fable-5',
+    designerAndAcceptor: `${FABLE_MODEL} (via tools/fable-bridge.mjs)`,
     backendSupervisor: 'gpt-6-astra (via tools/gpt6-bridge.mjs)',
-    implementer: 'deepseek-v4.1-flash',
+    implementer: 'deepseek-flash',
   },
   contract: {
     path: contract.contractPath,

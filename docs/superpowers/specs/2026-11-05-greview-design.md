@@ -1097,11 +1097,14 @@ data: {}
 
 实现阶段使用仓库现有 `greview-pipeline`：
 
+> 注意：Fable 与 GPT-6 通过 bridge 调用，不能使用文件工具。流水线会把 `specPath` 指向的设计文档作为 prompt 文件传给两个 bridge，因此 `requirement` 保留为一段简短指令即可，不需要把全文塞进参数。
+
 ```js
 Workflow({
   name: 'greview-pipeline',
   args: {
-    requirement: '严格按 D:/GReview/docs/superpowers/specs/2026-11-05-greview-design.md 实现 GReview。设计文档是唯一需求来源；不得引入账号、数据库、桌面壳；不得提交密钥。',
+    requirement: '严格按 specPath 的 GReview 设计文档实现。设计文档是唯一需求来源；不得引入账号、数据库、桌面壳；不得提交密钥。',
+    specPath: 'D:/GReview/docs/superpowers/specs/2026-11-05-greview-design.md',
     projectRoot: 'D:/GReview',
     frontendDir: 'web',
     backendDir: 'server',

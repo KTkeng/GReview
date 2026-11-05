@@ -123,13 +123,16 @@ If no files changed, no commit. If a bridge/config fix was made, commit it with 
 
 - [ ] **Step 1: Invoke `greview-pipeline`**
 
+Fable and GPT-6 are called through bridges and cannot read files. The pipeline adds `specPath` as a prompt file to both bridges; keep `requirement` as a short instruction.
+
 Use the Workflow tool:
 
 ```js
 Workflow({
   name: 'greview-pipeline',
   args: {
-    requirement: '严格按 D:/GReview/docs/superpowers/specs/2026-11-05-greview-design.md 实现 GReview。设计文档是唯一需求来源；不得引入账号、数据库、桌面壳；不得提交密钥。重点实现 §6.9 本地数据存储与复用、§8 AI 分析、§9 报告、§10 API 契约、§12 安全、§13 验收。',
+    requirement: '严格按 specPath 的 GReview 设计文档实现。设计文档是唯一需求来源；不得引入账号、数据库、桌面壳；不得提交密钥。',
+    specPath: 'D:/GReview/docs/superpowers/specs/2026-11-05-greview-design.md',
     projectRoot: 'D:/GReview',
     frontendDir: 'web',
     backendDir: 'server',
