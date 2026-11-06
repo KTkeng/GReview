@@ -5,6 +5,8 @@
 - 工作名：GReview（可改）
 - 构建方式：`greview-pipeline`（Fable 前端设计/验收 + GPT-6 后端架构/监督 + DeepSeek 实现）
 
+> 2026-11-06 仓库结构调整：产品代码位于 `GameReview/`；下文的 `web/`、`server/`、`package.json`、`data/` 路径均相对于 `GameReview/`。仓库根目录的 `.claude/`、`tools/`、`docs/superpowers/` 是开发流水线与设计文档。
+
 ---
 
 ## 1. 摘要
@@ -1108,7 +1110,7 @@ Workflow({
   args: {
     requirement: '严格按 specPath 的 GReview 设计文档实现。设计文档是唯一需求来源；不得引入账号、数据库、桌面壳；不得提交密钥。',
     specPath: 'D:/GReview/docs/superpowers/specs/2026-11-05-greview-design.md',
-    projectRoot: 'D:/GReview',
+    projectRoot: 'D:/GReview/GameReview',
     frontendDir: 'web',
     backendDir: 'server',
     stack: 'React + Vite + TypeScript / Node + Express + TypeScript / ECharts / Vitest',

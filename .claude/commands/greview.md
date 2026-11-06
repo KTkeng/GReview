@@ -6,7 +6,7 @@ argument-hint: <需求描述>
 使用 Workflow 工具运行预定义工作流：
 
 - `name`: `greview-pipeline`
-- `args`: `{ "requirement": "$ARGUMENTS", "projectRoot": "D:/GReview" }`
+- `args`: `{ "requirement": "$ARGUMENTS", "projectRoot": "D:/GReview/GameReview", "specPath": "D:/GReview/docs/superpowers/specs/2026-11-05-greview-design.md" }`
 
 如果 `$ARGUMENTS` 为空或只有空白，不要运行工作流，先向用户询问需求。
 

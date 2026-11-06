@@ -9,6 +9,9 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: GameReview
     strategy:
       fail-fast: false
       matrix:
@@ -22,6 +25,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: GameReview/package-lock.json
 
       - name: Install
         run: npm ci

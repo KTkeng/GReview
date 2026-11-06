@@ -12,6 +12,8 @@
 
 **Execution method:** `greview-pipeline` (user-selected; Tasks 1–2 run it, Tasks 3–7 verify/fix/deliver).
 
+> 2026-11-06 仓库结构调整：产品代码已移至 `GameReview/`；本计划中的 `web/`、`server/`、`package.json`、`data/` 均相对于 `GameReview/`。流水线使用 `projectRoot: 'D:/GReview/GameReview'`，`specPath` 仍指向根 `docs/superpowers/specs/...`。
+
 ## Global Constraints
 
 - The design doc is the sole source of truth. If the pipeline's contract conflicts with it, the design wins.
@@ -133,7 +135,7 @@ Workflow({
   args: {
     requirement: '严格按 specPath 的 GReview 设计文档实现。设计文档是唯一需求来源；不得引入账号、数据库、桌面壳；不得提交密钥。',
     specPath: 'D:/GReview/docs/superpowers/specs/2026-11-05-greview-design.md',
-    projectRoot: 'D:/GReview',
+    projectRoot: 'D:/GReview/GameReview',
     frontendDir: 'web',
     backendDir: 'server',
     stack: 'React + Vite + TypeScript / Node + Express + TypeScript / ECharts / Vitest',

@@ -1,21 +1,24 @@
 # GReview 三模型工作流
 
-> 本文档描述三模型开发流水线设施；产品使用说明见根 [README.md](../README.md)。
+> 本文档描述三模型开发流水线设施；产品代码在 [GameReview/](../GameReview/)，应用说明见 [GameReview/README.md](../GameReview/README.md)。
+>
+> 2026-11-06 目录调整：`GameReview/` 是完整应用（web、server、package.json、data、docs）；`.claude/`、`tools/`、`docs/superpowers/` 是开发流水线与设计文档。重跑流水线时 `projectRoot` 使用 `D:/GReview/GameReview`，`specPath` 指向根 `docs/superpowers/specs/...`。
 
 这是一个面向 Claude Code `Workflow` 引擎的三模型协作流水线：
 
 | 角色 | 模型 | 职责 |
 | --- | --- | --- |
-| 前端设计与验收 | `claude-fable-5` | 页面/组件/设计 token、验收清单、最终前端验收 |
-| 后端架构与监督 | `gpt-6-astra` | 数据模型、API 契约、实现审查、驱动修复 |
-| 具体实现 | `deepseek-v4.1-flash` | 前后端编码、集成、按监督/验收意见修复、写报告 |
+| 前端设计与验收 | `claude-fable-5`（经 fable-bridge） | 页面/组件/设计 token、验收清单、最终前端验收 |
+| 后端架构与监督 | `gpt-6-astra`（经 gpt6-bridge） | 数据模型、API 契约、实现审查、驱动修复 |
+| 具体实现 | `deepseek-flash` | 前后端编码、集成、按监督/验收意见修复、写报告 |
 
-> 当前目录只包含工作流设施，不包含具体产品代码。运行主流水线时通过参数传入需求即可。
+> 产品代码位于 `GameReview/`；本文件所在位置是工作流设施。运行主流水线时通过参数传入需求与 `specPath`。
 
 ## 目录
 
 ```text
 D:/GReview
+├─ GameReview/               # 产品代码（web/、server/、data/、docs/）
 ├─ .claude/
 │  ├─ commands/
 │  │  ├─ greview.md          # /greview <需求> 运行主流水线
@@ -24,21 +27,28 @@ D:/GReview
 │     ├─ greview-pipeline.js # 主流水线（设计 → 实现 → 监督 → 验收 → 报告）
 │     └─ greview-smoke.js    # 三模型冒烟验证（不构建项目）
 ├─ tools/
-│  └─ gpt6-bridge.mjs        # GPT-6 OpenAI 协议桥
-└─ README.md
+│  ├─ gpt6-bridge.mjs        # GPT-6 OpenAI 协议桥
+│  └─ fable-bridge.mjs       # Fable Anthropic 协议桥
+├─ docs/
+│  ├─ PIPELINE.md            # 本文档
+│  └─ superpowers/           # 设计文档与实现计划
+├─ .github/workflows/ci.yml  # CI（在 GameReview/ 下执行）
+├─ LICENSE
+└─ README.md                 # 仓库首页；应用说明在 GameReview/README.md
 ```
 
-## 为什么 GPT-6 需要 bridge
+## 为什么 Fable 和 GPT-6 需要 bridge
 
-实测（本机 CC Switch 聚合环境）：
+当前会话的 Anthropic 兼容端点只接受 `deepseek-flash` / `deepseek-v4-pro`：
 
-- `claude-fable-5`、`deepseek-v4.1-flash` 可通过 `agent({ model })` 原生调用；
+- `deepseek-flash` 可通过 `agent({ model })` 原生调用；
+- Fable 走 CC Switch 的 Claude 提供商，通过 `tools/fable-bridge.mjs` 调用；
 - `gpt-6-astra` 的 Anthropic 协议被上游拒绝：
   `403 This group does not allow /v1/messages dispatch`；
 - 同一密钥的 OpenAI 协议可用：
   `POST https://api.cocoapi.top/v1/chat/completions` → 200，且支持 `response_format: json_object`。
 
-因此工作流里所有 GPT-6 调用都经过 `tools/gpt6-bridge.mjs`。桥接是"传输代理"模式：一个轻量 agent 只负责把提示词写入临时文件、执行 bridge、把 GPT-6 的回复逐字返回，不做二次创作。
+因此工作流里 Fable 调用经过 `tools/fable-bridge.mjs`，GPT-6 调用经过 `tools/gpt6-bridge.mjs`。两个 bridge 都是"传输代理"模式：一个轻量 DeepSeek agent 只负责把提示词写入临时文件、执行 bridge、把模型回复逐字返回，不做二次创作。
 
 ## 快速验证
 
@@ -90,9 +100,10 @@ Workflow({
   name: 'greview-pipeline',
   args: {
     requirement: '需求描述',
-    projectRoot: 'D:/GReview',
+    projectRoot: 'D:/GReview/GameReview',
     frontendDir: 'web',
     backendDir: 'server',
+    specPath: 'D:/GReview/docs/superpowers/specs/2026-11-05-greview-design.md',
     stack: 'React + Vite / Node + Express（可选）',
     maxRounds: 3
   }
