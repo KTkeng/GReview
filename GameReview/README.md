@@ -137,6 +137,10 @@ GameReview/
 - 自动化测试：后端 222 项 + 前端 72 项（当前版本；Windows 上有 1 项符号链接测试按平台显式跳过）。
 - 真实网络冒烟（Steam + 真实 DeepSeek Key）需要使用者在本机执行；自动化测试不依赖真实网络。
 
+## 反馈与问题上报
+
+发现 bug 或有建议，请发邮件到 **ktkengtu@163.com**。请附上游戏 AppID、错误码/错误详情、是否使用真实 DeepSeek Key；**不要发送 API Key**。
+
 ## License
 
 MIT。见 [../LICENSE](../LICENSE)。

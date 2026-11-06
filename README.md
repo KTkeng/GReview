@@ -62,6 +62,10 @@ You need a [DeepSeek API key](https://platform.deepseek.com/). The key is stored
 - [Application README](GameReview/README.md) — full documentation (Chinese)
 - [Acceptance and known issues](GameReview/docs/ACCEPTANCE.md) — test status, known limitations, deferred checks
 
+### Feedback / Bug reports
+
+Found a bug or have a suggestion? Email **ktkengtu@163.com**. Please include the game AppID, the error code/message, and whether a real DeepSeek key was used. **Never send your API key.**
+
 ### License
 
 MIT — see [LICENSE](LICENSE).
@@ -127,6 +131,10 @@ npm start
 
 - [完整应用说明](GameReview/README.md)
 - [验收与已知问题](GameReview/docs/ACCEPTANCE.md)
+
+### 反馈与问题上报
+
+发现 bug 或有建议，请发邮件到 **ktkengtu@163.com**。请附上游戏 AppID、错误码/错误信息、是否使用真实 DeepSeek Key；**不要发送 API Key**。
 
 ### 许可证
 
