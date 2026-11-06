@@ -2,7 +2,7 @@
 
 - 日期：2026-11-06
 - 版本：v0.1.0
-- 构建/测试：`npm test` 通过；后端 **215 passed / 1 skipped**，前端 **70 passed**；`npm run build`、`npm run lint` 均 exit 0。
+- 构建/测试：`npm test` 通过；后端 **217 passed / 1 skipped**，前端 **70 passed**；`npm run build`、`npm run lint` 均 exit 0。
 - 真实 Steam + DeepSeek 端到端冒烟：尚未执行，需使用者在本机填入自己的 Key 后验证。
 
 ## 三模型流水线结果
