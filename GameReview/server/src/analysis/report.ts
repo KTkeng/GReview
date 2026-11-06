@@ -504,7 +504,7 @@ export function buildReport(input: BuildReportInput): Report {
       aiModel: input.aiOptions.model,
       thinkingEnabled: input.aiOptions.thinking,
       promptVersion: PROMPT_VERSION,
-      generatedBy: 'GReview 0.1.2',
+      generatedBy: 'GReview 0.1.3',
     },
   };
 }

@@ -31,6 +31,12 @@ The application lives entirely in [`GameReview/`](GameReview/).
 
 Requires Node.js 20+.
 
+#### Windows one-click
+
+Download `GReview-v0.1.3-windows.zip` from [Releases](https://github.com/KTkeng/GReview/releases/latest), unzip it, and double-click `start-greview.bat`. The launcher checks Node.js 20+, installs dependencies on first run, starts GReview, and opens the browser.
+
+#### Manual
+
 ```bash
 cd GameReview
 npm install
@@ -100,6 +106,12 @@ README.md
 ### 快速开始
 
 需要 Node.js 20+。
+
+#### Windows 一键启动
+
+从 [Releases](https://github.com/KTkeng/GReview/releases/latest) 下载 `GReview-v0.1.3-windows.zip`，解压后双击 `start-greview.bat`。启动器会检查 Node.js 20+、首次运行自动安装依赖、启动 GReview 并打开浏览器。
+
+#### 手动启动
 
 ```bash
 cd GameReview

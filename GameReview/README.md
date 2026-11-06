@@ -40,6 +40,15 @@ npm start
 
 然后打开 <http://127.0.0.1:53821>。
 
+## Windows 一键启动
+
+从 [Releases](https://github.com/KTkeng/GReview/releases/latest) 下载 `GReview-v0.1.3-windows.zip`，解压后双击 `start-greview.bat`。
+
+- 首次运行会自动检查 Node.js 20+/npm、安装依赖，并打开浏览器。
+- 之后双击会直接启动；如果 GReview 已在运行，只会打开浏览器。
+- 不需要手动执行 npm 命令，也不需要把 API Key 写进文件。
+- 如果未安装 Node.js，脚本会打开官方下载页面。
+
 ## 使用流程
 
 1. 粘贴 Steam 商店链接、社区链接或直接输入 AppID。

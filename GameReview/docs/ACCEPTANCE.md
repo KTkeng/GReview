@@ -1,7 +1,7 @@
-# GReview v0.1.2 验收与已知问题
+# GReview v0.1.3 验收与已知问题
 
 - 日期：2026-11-06
-- 版本：v0.1.2
+- 版本：v0.1.3
 - 构建/测试：`npm test` 通过；后端 **222 passed / 1 skipped**，前端 **72 passed**；`npm run build`、`npm run lint` 均 exit 0。
 - 真实 Steam + DeepSeek 端到端冒烟：需要使用者在本机填入自己的 Key 后验证。
 
@@ -11,13 +11,19 @@
 - **报告写入校验**：报告持久化层接受 `mixed`，避免分析成功但保存时报 INTERNAL。
 - **数据集复用**：多页抓取保留第一页的完整 `query_summary`，不再被后续残缺页覆盖；修复 200 条数据集被误判 `corrupted` 的问题。
 
+## v0.1.3 新增
+
+- **Windows 一键启动器**：`start-greview.bat` 会检查 Node.js 20+/npm、首次运行安装依赖、构建产物缺失时构建、启动服务并打开浏览器；已在运行时不会重复启动。
+- **Release 安装包**：`GReview-v0.1.3-windows.zip` 包含已构建的前端/后端、启动器和文档，解压后双击即可使用；用户不需要手动执行 npm 命令。
+- macOS/Linux 用户仍按 README 使用 `npm install` / `npm run dev`。
+
 ## 验收状态
 
 - 本地只读/写接口、Steam 抓取、官方月度趋势聚合、DeepSeek 结构化分析、证据校验、本地数据集/报告复用、Markdown 导出与打印均已实现。
 - 构建、类型检查和自动化测试通过；集成测试不依赖真实 Steam/DeepSeek 网络。
 - 真实网络路径（Steam 请求、DeepSeek 调用、浏览器打印）需要本机环境验证。
 
-## 已知问题（v0.1.2，不阻塞正常使用）
+## 已知问题（v0.1.3，不阻塞正常使用）
 
 1. **Steam 串行调度的取消穿透**（`server/src/steam/client.ts`，major）
    排队节点被取消时会提前释放队列位置，可能让后续请求越过仍在执行的请求。正常低并发使用不受影响；高并发/取消场景需修。

@@ -274,7 +274,7 @@ export function makeConfig(tmpDir: string, overrides: Partial<ServerConfig> = {}
     jobRetentionMs: 60 * 60 * 1000,
     timezone: 'Asia/Shanghai',
     webDist: path.join(tmpDir, 'web-dist'),
-    version: '0.1.2',
+    version: '0.1.3',
     nodeEnv: 'test',
     ...overrides,
   };
