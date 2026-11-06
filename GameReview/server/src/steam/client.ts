@@ -500,7 +500,12 @@ export class SteamClient {
       pages += 1;
       source = page.source;
       if (page.summary) {
-        summary = page.summary;
+        // The official endpoint only returns the complete query_summary on the
+        // first page; later pages may omit it or return a partial/zero summary.
+        // Keep the first page summary as the dataset's source of truth so a
+        // multi-page fetch cannot persist `total: 100, positive: 0` and be
+        // rejected by the dataset runtime validator.
+        if (summary === null) summary = page.summary;
         // `matchingTotal` is an explicit count; only fall back to `total` when
         // the summary truly has no matching info (never when it is zero).
         matchedTotal = Math.max(

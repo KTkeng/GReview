@@ -68,6 +68,15 @@ describe('themeData', () => {
       'positive',
     ]);
   });
+
+  it('maps mixed sentiment to neutral and dedupes repeated themes', () => {
+    const mixed: Theme[] = [
+      { id: 'm', name: '争议', mentions: 5, summary: '', evidenceIds: [], sentiment: 'mixed' },
+      { id: 'm', name: '争议', mentions: 5, summary: '', evidenceIds: [], sentiment: 'mixed' },
+    ];
+    expect(themeData(mixed)).toHaveLength(1);
+    expect(themeData(mixed)[0].sentiment).toBe('neutral');
+  });
 });
 
 describe('preview helpers', () => {

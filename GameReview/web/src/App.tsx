@@ -133,7 +133,7 @@ export default function App() {
   const [forceFetch, setForceFetch] = useState(false);
   const [forceAnalyze, setForceAnalyze] = useState(false);
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-  const [version, setVersion] = useState('0.1.1');
+  const [version, setVersion] = useState('0.1.2');
   const [applyingDataDir, setApplyingDataDir] = useState(false);
   const [dataDirApplyError, setDataDirApplyError] = useState<string | null>(null);
   const [dataDirMessage, setDataDirMessage] = useState<string | null>(null);

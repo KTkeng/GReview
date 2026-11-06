@@ -2,7 +2,7 @@ import { AppError } from '../lib/errors';
 import type { AiOptions, GameMeta, KpiWindows, Review, ScrapeFilters, SteamSummary, TokenUsage, TrendDataset } from '../types';
 import type { AIProvider } from '../ai/deepseek';
 import { buildFinalPrompt, buildHolisticPrompt, buildMapPrompt, buildMergePrompt, type KpiSummaryInput } from '../ai/prompts';
-import { parseAnalysis, type ParsedAnalysis } from '../ai/schema';
+import { parseAnalysis, type ParsedAnalysis, type RawTheme } from '../ai/schema';
 import { splitThemes, validateEvidence, type ValidatedAnalysis } from './evidence';
 import { buildChunks, DEFAULT_MAX_CHUNKS, DEFAULT_MAX_TOKENS_PER_CHUNK } from './chunk';
 import { scoreDescForRate } from './conclusion';
@@ -85,6 +85,24 @@ function normalizeThemeName(name: string): string {
   return name.trim().toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
 }
 
+/** Parse one stage and keep the stage name in the diagnostic. */
+function parseWithStage(raw: unknown, stage: string): ParsedAnalysis {
+  try {
+    return parseAnalysis(raw);
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw new AppError('AI_INVALID_RESPONSE', `${stage}: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+/** A theme is usable only when at least one cited review exists in the sample. */
+function hasUsableThemes(themes: RawTheme[], reviews: Review[]): boolean {
+  const ids = new Set(reviews.map((r) => r.id));
+  return themes.some((theme) => theme.evidenceIds.some((id) => ids.has(id)));
+}
+
 /**
  * The final stage may only restate themes produced by the merge stage (design
  * §8.4: "不得引入新主题"). Themes are matched by id first, then by normalized
@@ -156,7 +174,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
       signal: input.signal,
     });
     usage = addUsage(usage, result.usage);
-    combined = parseAnalysis(result.data);
+    combined = parseWithStage(result.data, '整体分析');
     report('analyzing', 85, 'AI 整体分析完成', { chunks: 1 });
   } else {
     const mapped: ParsedAnalysis[] = [];
@@ -171,13 +189,13 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
         model: input.aiOptions.model,
         system: prompt.system,
         user: prompt.user,
-        maxTokens: 4096,
+        maxTokens: 8192,
         temperature: input.aiOptions.temperature,
         thinking: input.aiOptions.thinking,
         signal: input.signal,
       });
       usage = addUsage(usage, result.usage);
-      mapped.push(parseAnalysis(result.data));
+      mapped.push(parseWithStage(result.data, `分块分析 ${i + 1}/${chunks.length}`));
     }
 
     const combinedMap = mergeAnalyses(mapped);
@@ -188,18 +206,22 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
       model: input.aiOptions.model,
       system: mergePrompt.system,
       user: mergePrompt.user,
-      maxTokens: 4096,
+      maxTokens: 8192,
       temperature: input.aiOptions.temperature,
       thinking: input.aiOptions.thinking,
       signal: input.signal,
     });
     usage = addUsage(usage, mergeResult.usage);
-    const merged = parseAnalysis(mergeResult.data);
+    const merged = parseWithStage(mergeResult.data, '合并主题');
     const mergeThemes = merged.themes.length ? merged.themes : combinedMap.themes;
+    // The final model is a writer, not the source of truth for themes. Use the
+    // merged themes when at least one cites a real review; otherwise fall back
+    // to the map themes rather than letting a bad final stage delete everything.
+    const authoritativeThemes = hasUsableThemes(mergeThemes, sample) ? mergeThemes : combinedMap.themes;
 
     report('analyzing', 80, 'AI 生成结论中', { chunks: chunks.length });
     ensureActive();
-    const finalPrompt = buildFinalPrompt(mergeThemes, kpis, input.trend.points, input.includeTranslations);
+    const finalPrompt = buildFinalPrompt(authoritativeThemes, kpis, input.trend.points, input.includeTranslations);
     const finalResult = await input.ai.chatJson({
       model: input.aiOptions.model,
       system: finalPrompt.system,
@@ -210,13 +232,14 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
       signal: input.signal,
     });
     usage = addUsage(usage, finalResult.usage);
-    const final = parseAnalysis(finalResult.data);
-    const restrictedFinalThemes = restrictThemesToMerge(final.themes, mergeThemes);
+    const final = parseWithStage(finalResult.data, '生成结论');
+    // Themes, expectation gaps and update impact stay evidence-backed from the
+    // map/merge stages. The final stage contributes prose and recommendations.
     combined = {
-      themes: restrictedFinalThemes.length ? restrictedFinalThemes : mergeThemes,
-      expectationGaps: final.expectationGaps.length ? final.expectationGaps : combinedMap.expectationGaps,
-      updateImpact: final.updateImpact.length ? final.updateImpact : combinedMap.updateImpact,
-      recommendations: final.recommendations.length ? final.recommendations : combinedMap.recommendations,
+      themes: authoritativeThemes,
+      expectationGaps: combinedMap.expectationGaps,
+      updateImpact: combinedMap.updateImpact,
+      recommendations: final.recommendations,
       conclusion: final.conclusion,
     };
     report('analyzing', 90, 'AI 分析完成', { chunks: chunks.length });
@@ -226,7 +249,10 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
   report('validating', 93, '校验 AI 证据引用');
   const validated = validateEvidence(combined, sample, { includeTranslations: input.includeTranslations });
   if (validated.themes.length === 0) {
-    throw new AppError('AI_INVALID_RESPONSE', '所有 AI 主题均因缺少有效证据被删除');
+    throw new AppError(
+      'AI_INVALID_RESPONSE',
+      `所有 AI 主题均因缺少有效证据被删除（候选 ${combined.themes.length} 个，样本 ${sample.length} 条）`,
+    );
   }
   const split = splitThemes(validated.themes);
   if (split.appealPoints.length === 0 && split.frictionPoints.length === 0) {

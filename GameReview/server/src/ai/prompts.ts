@@ -27,7 +27,7 @@ export function toPromptReviews(reviews: Review[]): PromptReview[] {
   }));
 }
 
-const JSON_RULES = `输出必须是严格合法的 json，不得包含 Markdown 代码块或解释文字。只依据给定评论，不得补充外部知识。每个主题至少提供 1 个 evidenceIds，且 ID 必须来自输入评论；quotes[].original 必须是对应评论正文的连续子串（原文摘录），不得改写或编造。不要判断销量、收入、在线人数或商业成败，只分析口碑。`;
+const JSON_RULES = `输出必须是严格合法的 json，不得包含 Markdown 代码块或解释文字。只依据给定评论，不得补充外部知识。每个主题至少提供 1 个 evidenceIds，且 ID 必须来自输入评论；quotes[].original 必须是对应评论正文的连续子串（原文摘录），不得改写或编造。sentiment 只能是 positive、negative、neutral 或 mixed；混合评价用 mixed。不要判断销量、收入、在线人数或商业成败，只分析口碑。`;
 
 /**
  * Translation policy. When translations are enabled, every quote whose source
@@ -50,7 +50,7 @@ export function mapSchemaExample(includeTranslations = true): string {
   const zh = includeTranslations ? ', "zh": "中文翻译（非中文时）"' : '';
   return `{
   "themes": [
-    { "name": "主题名", "category": "gameplay|story|performance|price|content|community|other", "sentiment": "positive|negative|neutral", "summary": "摘要", "evidenceIds": ["评论ID"], "keywords": ["关键词"], "quotes": [{ "reviewId": "评论ID", "original": "原文子串"${zh} }] }
+    { "name": "主题名", "category": "gameplay|story|performance|price|content|community|other", "sentiment": "positive|negative|neutral|mixed", "summary": "摘要", "evidenceIds": ["评论ID"], "keywords": ["关键词"], "quotes": [{ "reviewId": "评论ID", "original": "原文子串"${zh} }] }
   ],
   "expectationMentions": [
     { "expectation": "玩家预期", "reality": "实际体验", "evidenceIds": ["评论ID"], "quotes": [{ "reviewId": "评论ID", "original": "原文子串" }] }
@@ -111,7 +111,7 @@ export function buildFinalPrompt(
     system: `你是报告结论撰写者。基于已合并主题、KPI 与月度趋势，输出结论、置信度解释、局限和可行动建议。不得引入新主题，不得改写数字，不得判断销量/收入/商业成败。${jsonRules(includeTranslations)}${preserve}`,
     user: `主题：\n${JSON.stringify(themes).slice(0, 60000)}\n\nKPI：${JSON.stringify(kpis)}\n\n月度趋势：${JSON.stringify(
       trendPoints.map((p) => ({ period: p.period, total: p.total, positiveRate: Number(p.positiveRate.toFixed(4)) })),
-    )}\n\n请输出 json：{ "conclusion": { "label": "建议标签", "headline": "一句话结论", "summary": "2-4 段中文分析", "confidence": "high|medium|low", "caveats": ["局限"] }, "themes": [ ...保持服务端提供的主题与 evidenceIds，可补充 quotes... ], "expectationGaps": [], "updateImpact": [], "recommendations": [{ "title": "建议", "detail": "依据", "priority": "high|medium|low", "evidenceIds": ["评论ID"] }] }`,
+    )}\n\n请只输出 json：{ "conclusion": { "label": "建议标签", "headline": "一句话结论", "summary": "2-4 段中文分析", "confidence": "high|medium|low", "caveats": ["局限"] }, "recommendations": [{ "title": "建议", "detail": "依据", "priority": "high|medium|low", "evidenceIds": ["评论ID"] }] }。不要输出 themes、expectationGaps 或 updateImpact；服务端会使用已校验的合并主题与分块结果。`,
   };
 }
 

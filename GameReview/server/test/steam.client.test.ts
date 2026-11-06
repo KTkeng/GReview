@@ -332,6 +332,50 @@ describe('SteamClient pagination', () => {
     expect(result.sourceEndpoint).toBe('official');
   });
 
+  it('keeps the first page summary when later pages return a partial summary', async () => {
+    const cursors: string[] = [];
+    const client = new SteamClient({
+      fetchImpl: (async (url: string) => {
+        const input = JSON.parse(new URL(String(url)).searchParams.get('input_json') ?? '{}') as { cursor: string };
+        cursors.push(input.cursor);
+        if (input.cursor === '*') {
+          return jsonResponse(officialPage([rawReview('r1', 'first review')], 'c1', 200));
+        }
+        return jsonResponse({
+          response: {
+            reviews: [rawReview('r2', 'second review')],
+            cursor: undefined,
+            // The official endpoint omits query_summary after the first page;
+            // some deployments return a partial/zero summary instead.
+            query_summary: {
+              review_score_desc: '',
+              total_positive: 0,
+              total_negative: 0,
+              total_reviews: 0,
+            },
+            total_matching: 200,
+          },
+        });
+      }) as unknown as typeof fetch,
+      sleep: async () => undefined,
+      delayMs: 0,
+    });
+    const result = await client.fetchReviews(570, {
+      filters: withFilterDefaults(),
+      clientFilters: withClientFilterDefaults(),
+      maxReviews: 200,
+      maxPages: 5,
+    });
+    expect(cursors).toEqual(['*', 'c1']);
+    expect(result.pages).toBe(2);
+    expect(result.summary).toMatchObject({
+      total: 200,
+      positive: 180,
+      negative: 20,
+      matchingTotal: 200,
+    });
+  });
+
   it('stops on an empty page and honours maxPages', async () => {
     let calls = 0;
     let mode: 'empty' | 'paginate' = 'empty';

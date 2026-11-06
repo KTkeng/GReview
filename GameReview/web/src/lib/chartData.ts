@@ -57,7 +57,14 @@ export interface ThemeDatum {
 }
 
 export function themeData(themes: Theme[], limit = 10): ThemeDatum[] {
+  const seen = new Set<string>();
   return [...themes]
+    .filter((theme) => {
+      const key = theme.id || theme.name;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .map((theme) => ({
       name: theme.name,
       mentions: Number.isFinite(theme.mentions) ? theme.mentions : 0,

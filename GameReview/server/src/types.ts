@@ -159,7 +159,7 @@ export interface Theme {
   id?: string;
   name: string;
   category?: string;
-  sentiment?: 'positive' | 'negative' | 'neutral';
+  sentiment?: 'positive' | 'negative' | 'neutral' | 'mixed';
   mentions?: number;
   /** True when `mentions` is the AI's count rather than a server evidence count. */
   mentionsEstimated?: boolean;

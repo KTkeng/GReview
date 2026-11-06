@@ -430,6 +430,25 @@ describe('dataset storage', () => {
     expect(listed[0].status).toBe('corrupted');
   });
 
+  it('accepts mixed sentiment in a persisted report', async () => {
+    const dataDir = tmpDir();
+    const report = reportFor(HASH_A);
+    report.ai.appealPoints = [
+      {
+        id: 't1',
+        name: '争议主题',
+        mentions: 1,
+        summary: '玩家评价褒贬不一',
+        evidenceIds: ['r1'],
+        quotes: [],
+        sentiment: 'mixed',
+      },
+    ];
+    await saveReport(dataDir, 570, HASH_A, report);
+    const loaded = await readReport(dataDir, 570, HASH_A);
+    expect(loaded?.ai.appealPoints[0].sentiment).toBe('mixed');
+  });
+
   it('deletes a dataset together with reports that reference its content hash', async () => {
     const dataDir = tmpDir();
     const reviewsHash = buildReviewsHash(datasetInput());

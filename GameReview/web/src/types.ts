@@ -123,7 +123,7 @@ export interface Theme {
   id: string;
   name: string;
   category?: string;
-  sentiment?: 'positive' | 'negative' | 'neutral';
+  sentiment?: 'positive' | 'negative' | 'neutral' | 'mixed';
   mentions: number;
   summary: string;
   evidenceIds: string[];

@@ -105,7 +105,7 @@ describe('API basics, validation and origin protection', () => {
 
     const health = await request(app).get('/api/health');
     expect(health.status).toBe(200);
-    expect(health.body).toEqual({ ok: true, version: '0.1.1' });
+    expect(health.body).toEqual({ ok: true, version: '0.1.2' });
 
     const noKey = await request(app).post('/api/jobs').set('Origin', ORIGIN).send({ appid: 570 });
     expect(noKey.status).toBe(401);

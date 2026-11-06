@@ -144,8 +144,14 @@ export function splitThemes(themes: Theme[]): { appealPoints: Theme[]; frictionP
   const appealPoints: Theme[] = [];
   const frictionPoints: Theme[] = [];
   for (const theme of themes) {
-    if (theme.sentiment === 'negative') frictionPoints.push(theme);
-    else appealPoints.push(theme);
+    if (theme.sentiment === 'negative') {
+      frictionPoints.push(theme);
+    } else {
+      appealPoints.push(theme);
+      // A mixed theme contains both praise and criticism; show it in both
+      // perspectives rather than silently dropping or misclassifying it.
+      if (theme.sentiment === 'mixed') frictionPoints.push(theme);
+    }
   }
   return { appealPoints, frictionPoints };
 }

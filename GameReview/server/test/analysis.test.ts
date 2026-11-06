@@ -22,6 +22,8 @@ import { validateEvidence, splitThemes, isQuoteSubstring, normalizeForMatch } fr
 import { buildReport, refreshReport } from '../src/analysis/report';
 import { reportToMarkdown } from '../src/storage/markdown';
 import { analyzeReviews } from '../src/analysis/pipeline';
+import { parseAnalysis } from '../src/ai/schema';
+import type { AIChatRequest } from '../src/ai/deepseek';
 import type { TrendDataset } from '../src/types';
 import { FakeAIProvider, SAMPLE_ANALYSIS, SAMPLE_REVIEWS, SAMPLE_SUMMARY, makeReview } from './helpers';
 
@@ -216,6 +218,21 @@ describe('evidence validation', () => {
     expect(validated.recommendations[0].evidenceIds).toEqual(['r2']);
   });
 
+  it('accepts mixed sentiment from the model', () => {
+    const parsed = parseAnalysis({
+      themes: [{ name: '争议主题', sentiment: 'mixed', evidenceIds: ['r1'] }],
+    });
+    expect(parsed.themes[0].sentiment).toBe('mixed');
+  });
+
+  it('puts mixed themes in both appeal and friction groups', () => {
+    const split = splitThemes([
+      { id: 't1', name: '争议主题', mentions: 1, summary: '', evidenceIds: ['r1'], quotes: [], sentiment: 'mixed' },
+    ]);
+    expect(split.appealPoints).toHaveLength(1);
+    expect(split.frictionPoints).toHaveLength(1);
+  });
+
   it('normalizes quotes for matching across case, punctuation and width', () => {
     expect(normalizeForMatch('ＣＯＭＢＡＴ， feels   great!')).toBe('combatfeelsgreat');
     expect(isQuoteSubstring('combat, feels GREAT', 'Combat feels great and the boss fights are fun')).toBe(true);
@@ -319,9 +336,51 @@ describe('AI analysis pipeline', () => {
       maxChunks: 10,
     });
     expect(ai.calls).toHaveLength(5); // 3 map + merge + final
-    expect(result.analysis.themes).toHaveLength(1);
-    expect(result.analysis.themes[0].name).toBe('战斗手感');
+    expect(result.analysis.themes.some((t) => t.name === '战斗手感')).toBe(true);
     expect(result.analysis.themes.some((t) => t.name === '全新主题')).toBe(false);
+  });
+
+  it('keeps merge themes when the final stage returns a matching theme with no evidence', async () => {
+    let call = 0;
+    const ai = new FakeAIProvider((req: AIChatRequest) => {
+      call += 1;
+      if (call <= 3) {
+        const id = /"id":"(r\d+)"/.exec(req.user)?.[1] ?? 'r1';
+        return {
+          themes: [{ name: `主题${call}`, sentiment: 'mixed', summary: 's', evidenceIds: [id] }],
+        };
+      }
+      if (call === 4) {
+        return {
+          themes: [
+            {
+              name: '合并主题',
+              sentiment: 'mixed',
+              summary: 's',
+              evidenceIds: ['r1'],
+              quotes: [{ reviewId: 'r1', original: 'Combat feels great' }],
+            },
+          ],
+        };
+      }
+      return {
+        conclusion: { label: 'x', headline: 'h', summary: 's', confidence: 'high', caveats: [] },
+        themes: [{ name: '合并主题', sentiment: 'mixed', summary: 'bad', evidenceIds: ['missing'] }],
+        recommendations: [],
+      };
+    });
+    const result = await analyzeReviews({
+      ...input,
+      ai,
+      aiOptions: AI_OPTIONS,
+      includeTranslations: false,
+      maxTokensPerChunk: 1,
+      maxChunks: 10,
+    });
+    expect(ai.calls).toHaveLength(5); // 3 map + merge + final
+    expect(result.analysis.themes).toHaveLength(1);
+    expect(result.analysis.themes[0].name).toBe('合并主题');
+    expect(result.analysis.themes[0].evidenceIds).toEqual(['r1']);
   });
 
   const TRANSLATED_ANALYSIS = {

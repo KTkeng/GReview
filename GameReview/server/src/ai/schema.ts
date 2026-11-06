@@ -6,6 +6,23 @@ const idList = z
   .default([])
   .transform((ids) => ids.map((id) => String(id)).filter(Boolean));
 
+/**
+ * Sentiment is narrative metadata, not a validation gate. Models sometimes
+ * answer `mixed` (or a localised variant) for a theme that contains both
+ * praise and criticism; accepting and normalising it keeps a useful analysis
+ * from failing outright. Unknown values are ignored rather than rejecting the
+ * whole response.
+ */
+const sentimentSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return undefined;
+  const s = value.trim().toLowerCase();
+  if (s === 'positive' || s === '正向' || s === '正面') return 'positive';
+  if (s === 'negative' || s === '负向' || s === '负面') return 'negative';
+  if (s === 'neutral' || s === '中性' || s === '中立') return 'neutral';
+  if (s === 'mixed' || s === 'both' || s.includes('褒贬') || s.includes('争议') || s.includes('混合')) return 'mixed';
+  return undefined;
+}, z.enum(['positive', 'negative', 'neutral', 'mixed']).optional());
+
 const QuoteSchema = z
   .object({
     reviewId: z.union([z.string(), z.number()]).optional(),
@@ -26,7 +43,7 @@ export const ThemeSchema = z
     id: z.union([z.string(), z.number()]).optional(),
     name: z.string().optional().default(''),
     category: z.string().optional(),
-    sentiment: z.enum(['positive', 'negative', 'neutral']).optional(),
+    sentiment: sentimentSchema,
     mentions: z.number().optional(),
     summary: z.string().optional().default(''),
     evidenceIds: idList,
@@ -54,7 +71,7 @@ const GapSchema = z
     summary: z.string().optional(),
     evidenceIds: idList,
     quotes: z.array(QuoteSchema).optional().default([]),
-    sentiment: z.enum(['positive', 'negative', 'neutral']).optional(),
+    sentiment: sentimentSchema,
     category: z.string().optional(),
   })
   .passthrough()
@@ -75,7 +92,7 @@ const UpdateSchema = z
     summary: z.string().optional(),
     evidenceIds: idList,
     quotes: z.array(QuoteSchema).optional().default([]),
-    sentiment: z.enum(['positive', 'negative', 'neutral']).optional(),
+    sentiment: sentimentSchema,
     category: z.string().optional(),
   })
   .passthrough()
@@ -132,7 +149,7 @@ export interface RawTheme {
   id?: string;
   name: string;
   category?: string;
-  sentiment?: 'positive' | 'negative' | 'neutral';
+  sentiment?: 'positive' | 'negative' | 'neutral' | 'mixed';
   mentions?: number;
   summary: string;
   evidenceIds: string[];

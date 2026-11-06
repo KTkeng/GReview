@@ -108,7 +108,8 @@ function isValidTheme(value: unknown): value is Theme {
     (value.sentiment === undefined ||
       value.sentiment === 'positive' ||
       value.sentiment === 'negative' ||
-      value.sentiment === 'neutral') &&
+      value.sentiment === 'neutral' ||
+      value.sentiment === 'mixed') &&
     (value.mentions === undefined || isNonNegativeInt(value.mentions)) &&
     (value.mentionsEstimated === undefined || typeof value.mentionsEstimated === 'boolean') &&
     typeof value.summary === 'string' &&

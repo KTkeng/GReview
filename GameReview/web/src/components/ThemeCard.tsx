@@ -13,6 +13,7 @@ const SENTIMENT_LABELS: Record<string, string> = {
   positive: '正向',
   negative: '负向',
   neutral: '中性',
+  mixed: '褒贬不一',
 };
 
 export function ThemeCard({ theme, knownReviewIds, onJumpToReview }: ThemeCardProps) {
@@ -59,7 +60,9 @@ export function ThemeCard({ theme, knownReviewIds, onJumpToReview }: ThemeCardPr
                   ? 'badge-positive'
                   : sentiment === 'negative'
                     ? 'badge-negative'
-                    : ''
+                    : sentiment === 'mixed'
+                      ? 'badge-warning'
+                      : ''
               }`}
             >
               {SENTIMENT_LABELS[sentiment] ?? sentiment}
