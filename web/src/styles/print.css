@@ -1,0 +1,208 @@
+/* 打印 / 导出 PDF：隐藏配置区与所有操作按钮，保留报告与图表 */
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+  }
+
+  .app-header,
+  .config-panel,
+  .mobile-action-bar,
+  .global-banner,
+  .no-print,
+  .btn,
+  .report-actions,
+  .table-footer .btn,
+  .data-dir-actions,
+  .dataset-actions,
+  .data-panel-footer,
+  /* 主题卡内的“定位到高赞评论”和证据 ID 按钮不应进入打印流 */
+  button.btn-link,
+  button.filter-chip,
+  .theme-chevron {
+    display: none !important;
+  }
+
+  .app-body {
+    display: block !important;
+  }
+
+  .workspace {
+    padding: 0 !important;
+    display: block !important;
+  }
+
+  .workspace-inner {
+    max-width: none !important;
+  }
+
+  .report-view {
+    gap: 10px !important;
+    padding-bottom: 0 !important;
+  }
+
+  .card,
+  .conclusion-card,
+  .kpi-card,
+  .chart-card,
+  .theme-card,
+  .recommendation,
+  .table-wrap,
+  .methodology,
+  .reuse-indicator {
+    background: #ffffff !important;
+    border-color: #d1d5db !important;
+    color: #111827 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  .report-toolbar {
+    background: #ffffff !important;
+    border-color: #d1d5db !important;
+  }
+
+  .report-toolbar-title,
+  .report-toolbar-title strong,
+  .report-toolbar .dim,
+  .reuse-indicator .reuse-note {
+    color: #111827 !important;
+  }
+
+  .conclusion-card {
+    background: #f9fafb !important;
+  }
+
+  .report-section {
+    break-inside: avoid;
+  }
+
+  .chart-canvas {
+    height: 260px !important;
+    break-inside: avoid;
+  }
+
+  .chart-card,
+  .theme-card,
+  .reviews-table tr {
+    break-inside: avoid;
+  }
+
+  .text,
+  .muted {
+    color: #374151 !important;
+  }
+
+  h1,
+  h2,
+  h3,
+  .conclusion-label,
+  .conclusion-headline,
+  .kpi-value,
+  .theme-name,
+  .recommendation-title,
+  .reviews-table td,
+  .meta-value,
+  .data-dir-path {
+    color: #111827 !important;
+  }
+
+  .quote {
+    background: #f9fafb !important;
+    border-color: #d1d5db !important;
+  }
+
+  .quote-original {
+    color: #111827 !important;
+  }
+
+  .quote-zh,
+  .theme-summary,
+  .conclusion-summary,
+  .recommendation-detail,
+  .methodology-note,
+  .kpi-label,
+  .kpi-sub,
+  .chart-caption,
+  .reviews-table td {
+    color: #374151 !important;
+  }
+
+  .reviews-table th {
+    background: #f3f4f6 !important;
+    color: #374151 !important;
+    border-color: #d1d5db !important;
+  }
+
+  .badge,
+  .priority,
+  .filter-chip,
+  .quote-id {
+    border-color: #9ca3af !important;
+    color: #374151 !important;
+    background: #f3f4f6 !important;
+  }
+
+  .theme-card[data-sentiment='positive'] {
+    border-left-color: #15803d !important;
+  }
+
+  .theme-card[data-sentiment='negative'] {
+    border-left-color: #b91c1c !important;
+  }
+
+  .tabs {
+    display: none !important;
+  }
+
+  .tab-panel {
+    display: block !important;
+  }
+
+  .tab-print-title {
+    display: block !important;
+    margin-top: 14px;
+    color: #111827 !important;
+    font-size: 16px;
+    font-weight: 600;
+    border-bottom: 1px solid #d1d5db;
+    padding-bottom: 4px;
+  }
+
+  /* 图表画布在深色底上更清晰，打印时保留深色画布卡片 */
+  .chart-card {
+    background: #0b0f14 !important;
+    border-color: #374151 !important;
+  }
+
+  .chart-card .chart-title {
+    color: #e5e7eb !important;
+  }
+
+  .chart-card .chart-subtitle,
+  .chart-card .chart-caption {
+    color: #94a3b8 !important;
+  }
+
+  .chart-card .chart-caption strong {
+    color: #e5e7eb !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  a {
+    color: #111827 !important;
+    text-decoration: none !important;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}

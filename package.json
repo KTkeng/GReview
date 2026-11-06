@@ -1,0 +1,23 @@
+{
+  "name": "greview",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GReview: local Steam review analysis with official reputation trends and DeepSeek AI.",
+  "workspaces": [
+    "web",
+    "server"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"npm:dev -w server\" \"npm:dev -w web\"",
+    "build": "npm run build -w web && npm run build -w server",
+    "start": "npm run start -w server",
+    "test": "npm run test -w server && npm run test -w web",
+    "lint": "npm run lint -w server && npm run lint -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

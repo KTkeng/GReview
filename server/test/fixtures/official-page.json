@@ -1,0 +1,55 @@
+{
+  "response": {
+    "reviews": [
+      {
+        "recommendationid": "official-r1",
+        "author": {
+          "steamid": "76561190000000000",
+          "num_games_owned": 42,
+          "num_reviews": 7,
+          "playtime_forever": 600,
+          "playtime_at_review": 420,
+          "last_played": 1710000000
+        },
+        "language": "english",
+        "review": "[b]Combat[/b] feels &amp; looks great<br>Boss fights are fun",
+        "timestamp_created": 1700000000,
+        "timestamp_updated": 1700000100,
+        "voted_up": true,
+        "votes_up": 42,
+        "votes_funny": 3,
+        "weighted_vote_score": "0.8123",
+        "comment_count": 1,
+        "steam_purchase": true,
+        "received_for_free": false,
+        "written_during_early_access": false,
+        "primarily_steam_deck": false
+      },
+      {
+        "recommendationid": "official-r2",
+        "author": {
+          "steamid": "76561190000000001",
+          "playtime_at_review": 120
+        },
+        "language": "schinese",
+        "review": "价格太贵，内容量不足",
+        "timestamp_created": 1690000000,
+        "voted_up": false,
+        "votes_up": 12,
+        "weighted_vote_score": 0.5,
+        "received_for_free": false,
+        "written_during_early_access": true
+      }
+    ],
+    "cursor": "cursor-2",
+    "query_summary": {
+      "num_reviews": 2,
+      "review_score": 8,
+      "review_score_desc": "特别好评",
+      "total_positive": 9,
+      "total_negative": 1,
+      "total_reviews": 10
+    },
+    "total_matching": 10
+  }
+}

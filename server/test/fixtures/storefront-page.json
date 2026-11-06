@@ -1,0 +1,27 @@
+{
+  "success": 1,
+  "reviews": [
+    {
+      "recommendationid": "store-r1",
+      "author": {
+        "playtime_at_review": 90
+      },
+      "language": "english",
+      "review": "Solid gameplay loop, worth the price",
+      "timestamp_created": 1700000000,
+      "voted_up": true,
+      "votes_up": 21,
+      "weighted_vote_score": "0.7",
+      "received_for_free": false,
+      "written_during_early_access": false
+    }
+  ],
+  "cursor": "store-c2",
+  "query_summary": {
+    "review_score_desc": "好评",
+    "total_positive": 80,
+    "total_negative": 20,
+    "total_reviews": 100
+  },
+  "total_matching": 100
+}

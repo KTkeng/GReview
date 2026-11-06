@@ -1,180 +1,145 @@
-# GReview 三模型工作流
+# GReview
 
-这是一个面向 Claude Code `Workflow` 引擎的三模型协作流水线：
+GReview 是一个**本地运行、自用、开源**的 Steam 评论分析工具。粘贴 Steam 游戏链接、填入你自己的 DeepSeek API Key，它会把高赞评论抓下来，用官方聚合数据画出真实口碑趋势，再用 AI 归纳出玩家为什么买账、为什么劝退，并生成一份可导出的报告。
 
-| 角色 | 模型 | 职责 |
-| --- | --- | --- |
-| 前端设计与验收 | `claude-fable-5` | 页面/组件/设计 token、验收清单、最终前端验收 |
-| 后端架构与监督 | `gpt-6-astra` | 数据模型、API 契约、实现审查、驱动修复 |
-| 具体实现 | `deepseek-v4.1-flash` | 前后端编码、集成、按监督/验收意见修复、写报告 |
+它不判断游戏的商业成败（拿不到销量），只判断**口碑表现**。
 
-> 当前目录只包含工作流设施，不包含具体产品代码。运行主流水线时通过参数传入需求即可。
+> English summary: GReview is a local-first, open-source Steam review analyzer. Bring your own DeepSeek API key; it fetches configurable review samples, builds a bias-free reputation trend from Steam's official aggregates, and generates an evidence-backed report with charts. No account, no server, no telemetry. MIT licensed.
 
-## 目录
+## 功能
 
-```text
-D:/GReview
-├─ .claude/
-│  ├─ commands/
-│  │  ├─ greview.md          # /greview <需求> 运行主流水线
-│  │  └─ verify-greview.md   # /verify-greview 运行冒烟验证
-│  └─ workflows/
-│     ├─ greview-pipeline.js # 主流水线（设计 → 实现 → 监督 → 验收 → 报告）
-│     └─ greview-smoke.js    # 三模型冒烟验证（不构建项目）
-├─ tools/
-│  └─ gpt6-bridge.mjs        # GPT-6 OpenAI 协议桥
-└─ README.md
-```
+- **灵活的抓取配置**：好评/差评、高赞/最新/最近更新、语言多选、时间范围、购买来源、数量上限，以及最低赞数、游玩时长、关键词、最短字数、排除抢先体验/免费获得等二次筛选。
+- **抓取前预览**：展示游戏、总评论数、好评率、当前条件命中数、预估页数/耗时/AI 费用；不会盲抓。
+- **真实口碑趋势**：按月调用 Steam 官方聚合，不拿高赞样本冒充时间趋势；报告标注数据源与覆盖区间。
+- **AI 归纳**：核心吸引点、劝退点、玩家预期落差、版本/更新影响、可行动建议；每条主题附证据原话，并在服务端校验评论 ID 与引用是否真实存在。
+- **报告优先**：结论 → 口碑趋势 → AI 归纳；另有 KPI、高赞评论、方法与局限。
+- **导出**：Markdown 下载；浏览器打印/另存为 PDF。
+- **本地数据复用**：抓取结果、趋势和报告自动保存；同条件再次分析默认复用，**不重复抓取、不重复消耗 token**。
+- **密钥安全**：DeepSeek Key 只存浏览器 `localStorage`，通过请求头发送，服务端只在任务内存中持有，结束/取消即清除。
 
-## 为什么 GPT-6 需要 bridge
+## 快速开始
 
-实测（本机 CC Switch 聚合环境）：
-
-- `claude-fable-5`、`deepseek-v4.1-flash` 可通过 `agent({ model })` 原生调用；
-- `gpt-6-astra` 的 Anthropic 协议被上游拒绝：
-  `403 This group does not allow /v1/messages dispatch`；
-- 同一密钥的 OpenAI 协议可用：
-  `POST https://api.cocoapi.top/v1/chat/completions` → 200，且支持 `response_format: json_object`。
-
-因此工作流里所有 GPT-6 调用都经过 `tools/gpt6-bridge.mjs`。桥接是"传输代理"模式：一个轻量 agent 只负责把提示词写入临时文件、执行 bridge、把 GPT-6 的回复逐字返回，不做二次创作。
-
-## 快速验证
-
-### 方式一：斜杠命令
-
-```text
-/verify-greview
-```
-
-### 方式二：直接对话
-
-```text
-运行 greview-smoke 工作流
-```
-
-### 方式三：只验证 GPT-6 连通性
+要求：Node.js **20 或更高**。
 
 ```bash
-node tools/gpt6-bridge.mjs --probe --json
+npm install
+npm run dev
 ```
 
-期望输出包含 `"ok": true`、`"model": "gpt-6-astra"`、`"content": "OK"`。
+开发模式会同时启动后端和 Vite 前端：
 
-### 方式四：查看 bridge 识别到的提供商
+- 前端：<http://127.0.0.1:5173>
+- 后端：<http://127.0.0.1:53821>
+
+生产模式：
 
 ```bash
-node tools/gpt6-bridge.mjs --list-providers
+npm run build
+npm start
 ```
 
-冒烟验证检查四项：
+然后打开 <http://127.0.0.1:53821>。
 
-1. `fableDesign`：Fable 返回结构化前端规格；
-2. `deepseekImplement`：DeepSeek 返回后端 + 前端代码片段；
-3. `gpt6Bridge`：GPT-6 经 bridge 返回可解析的监督 JSON；
-4. `fableAcceptance`：Fable 返回结构化验收结论。
+## 使用流程
 
-四项全真时 `ok: true`。
+1. 粘贴 Steam 商店链接、社区链接或直接输入 AppID。
+2. 填入自己的 DeepSeek API Key，点击“测试连接”选择模型（默认 `deepseek-flash`）。
+3. 配置抓取范围与趋势范围，点击“预览命中数”。
+4. 点击“开始分析”，等待抓取 → 趋势聚合 → AI 分析 → 报告。
+5. 查看报告，导出 Markdown 或打印为 PDF。
+6. 下次同条件分析时，勾选复用本地数据集/报告即可节省时间和 token。
 
-## 运行主流水线
+## DeepSeek API Key
+
+- 从 [DeepSeek 开放平台](https://platform.deepseek.com/) 获取 API Key。
+- Key 只保存在本机浏览器 `localStorage`；请求通过 `X-DeepSeek-Key` 头发送。
+- 服务端不把 Key 写入日志、缓存、数据集、报告或导出物；任务结束/取消后清除内存引用。
+- 默认 Base URL 为 `https://api.deepseek.com`，高级设置可改为兼容 OpenAI 协议的服务。
+- “思考模式”开关默认关闭；开启后更慢、消耗更多 token，可能更深入。
+
+## 本地数据与复用
+
+默认数据目录是项目根下的 `./data/`（已加入 `.gitignore`），可在界面中改为任意绝对路径。
 
 ```text
-/greview 做一个支持 Markdown 的团队周报应用：登录、周报编辑、评论、按人筛选
+data/
+  <appid>/
+    game.json
+    reviews/<reviewsHash>/
+      meta.json
+      reviews.json
+    trends/<trendHash>.json
+    reports/<analysisHash>.json
+    reports/<analysisHash>.md
 ```
 
-或显式传参：
+- 抓取后自动保存评论与趋势；分析后自动保存报告。
+- 同条件默认复用本地数据集和报告；界面会显示“复用本地数据 / 未请求 Steam / 本次未消耗 token”。
+- “重新抓取”“重新分析”会强制刷新对应部分。
+- 数据目录会校验绝对路径、可写性，并拒绝 `node_modules`、`.git`、源码目录等危险位置。
+- 删除/清空数据只影响数据目录，不影响代码。
 
-```js
-Workflow({
-  name: 'greview-pipeline',
-  args: {
-    requirement: '需求描述',
-    projectRoot: 'D:/GReview',
-    frontendDir: 'web',
-    backendDir: 'server',
-    stack: 'React + Vite / Node + Express（可选）',
-    maxRounds: 3
-  }
-})
-```
+## 常用脚本
 
-参数：
-
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `requirement` | 必填 | 需求规格；为空时流水线直接返回提示 |
-| `projectRoot` | `D:/GReview` | 工程根目录 |
-| `frontendDir` | `web` | 前端目录（相对 projectRoot） |
-| `backendDir` | `server` | 后端目录 |
-| `stack` | 未指定 | 技术栈提示；不填则由架构阶段决定 |
-| `maxRounds` | `3` | 后端监督 / 前端验收各自的最大修复轮次（1–5） |
-| `bridgePath` | `D:/GReview/tools/gpt6-bridge.mjs` | GPT-6 bridge 路径 |
-
-## 主流水线阶段
-
-1. **Contract**
-   - Fable 产出前端设计（页面、组件、状态、tokens、验收清单）；
-   - GPT-6 产出后端架构（数据模型、API 契约、安全、测试策略、验收清单）；
-   - Fable 合并为 `.greview/contract.json` 与 `.greview/contract.md`，API 契约以 GPT-6 为准。
-2. **Build**
-   - DeepSeek 并行实现 `server/` 与 `web/`（目录隔离，避免写冲突）；
-   - DeepSeek 集成检查：跑测试/构建、核对前后端字段。
-3. **Backend Review**
-   - DeepSeek 收集审查包（变更、源码、真实测试输出、敏感信息剔除）；
-   - GPT-6 经 bridge 审查，输出 `verdict` + `findings`；
-   - 有 blocker/major 时 DeepSeek 修复，循环至通过或达到 `maxRounds`。
-4. **Frontend Acceptance**
-   - Fable 直接读源码、跑构建、按验收清单检查（环境允许时可截图）；
-   - 不通过则由 DeepSeek 修复，循环。
-5. **Report**
-   - DeepSeek 写入 `reports/acceptance-report.md`；
-   - 返回 `backend.status`、`frontend.status`、轮次历史与未解决问题。
-
-状态值：`approved` / `accepted` 为通过；`needs_attention` 表示达到轮次上限或存在未解决问题；`error` 表示 agent 或 bridge 失败。
-
-## GPT-6 Bridge
-
-GPT-6 默认使用简体中文回复；JSON 字段名与提示词指定的枚举值保持英文，其余字段值用中文。
-
-```bash
-# 最小连通性测试
-node tools/gpt6-bridge.mjs --probe --json
-
-# 单提示词 + JSON 模式
-node tools/gpt6-bridge.mjs --prompt "审查这段代码..." --json --json-mode
-
-# 指令 + 上下文（按顺序拼接）
-node tools/gpt6-bridge.mjs \
-  --prompt-file instruction.md \
-  --prompt-file review-packet.md \
-  --json --json-mode --max-tokens 3000
-
-# 查看提供商（不回显密钥）
-node tools/gpt6-bridge.mjs --list-providers
-```
-
-密钥解析顺序：
-
-1. 环境变量 `GPT6_API_KEY`（推荐；可配合 `GPT6_BASE_URL`、`GPT6_MODEL`）；
-2. `~/.cc-switch/cc-switch.db` 中名称/模型/地址含 `gpt` 的 Claude 提供商配置。
-
-密钥只用于 `Authorization` 头，不打印、不落盘。工作流中的临时提示词与审查包写入 `.greview/`，请勿提交真实密钥。
-
-## 重要限制
-
-- **数据外发**：GPT-6 监督会把审查包（后端源码、测试输出）发送到 GPT 中转服务。敏感项目请先脱敏，或改用 `Fable 兼任监督` 方案。
-- **Token 开销**：实测 GPT-6 中转每次调用约有 4k–22k 的隐式 prompt 开销。流水线已尽量合并调用（架构 1 次 + 每轮监督 1 次），仍建议控制 `maxRounds`。
-- **CC Switch 依赖**：bridge 默认从 CC Switch 数据库读取 GPT 中转配置；若换机器，设置 `GPT6_API_KEY` / `GPT6_BASE_URL` 即可脱离该依赖。
-- **原生模型调用**：`deepseek-v4.1-flash` 实际模型 ID 为 `ccs-claude-deepseek--deepseek-flash[1M]`；`claude-fable-5` 为 `ccs-claude-claude--claude-fable-5`。这些 ID 来自本机 CC Switch 聚合配置，换环境需同步修改工作流常量。
-- **文件修改**：主流水线会真实写文件。建议在 git 仓库中运行，便于回滚。
-- **验收边界**：GPT-6 的 `approve` 是后端监督结论；Fable 的 `accept` 是前端验收结论。最终 `ok` 需要两者同时通过。
-
-## 故障排查
-
-| 现象 | 原因 / 处理 |
+| 命令 | 作用 |
 | --- | --- |
-| `403 This group does not allow /v1/messages dispatch` | 用了 Anthropic 协议调 GPT。bridge 已改用 `/v1/chat/completions`；确认 `baseUrl` 指向 GPT 中转 |
-| `401` | `GPT6_API_KEY` 或 CC Switch 中的 GPT 密钥无效 |
-| `未找到 CC Switch 数据库` | 设置 `GPT6_API_KEY` + `GPT6_BASE_URL` |
-| `agent 返回 null` | 对应模型调用失败；查看 `/workflows` 或 transcript 中的错误 |
-| GPT-6 输出无法解析 | 已启用 `--json-mode`；仍失败时监督轮次会标记 `needs_attention`，不会无限循环 |
-| Fable 验收无法启动预览 | 验收 agent 会退化为静态审查 + 构建验证，不强行安装浏览器依赖 |
+| `npm run dev` | 同时启动后端（tsx watch）与前端（Vite） |
+| `npm run build` | 构建前端与后端 |
+| `npm start` | 启动生产后端并托管前端静态文件 |
+| `npm test` | 运行后端与前端测试 |
+| `npm run lint` | TypeScript 类型检查（含测试源码） |
+| `npm run test -w server` | 只跑后端测试 |
+| `npm run test -w web` | 只跑前端测试 |
+
+## 数据源与限流
+
+- 评论优先使用 Steam 官方 `IUserReviewsService/GetAppReviews`；失败时回退到商店的 `ajaxappreviews` 端点。
+- 官方接口无需 Steam API Key；匿名请求有速率限制，超限返回 429。
+- 请求按 350–500ms 间隔顺序发出，429 指数退避；原始响应短期缓存，减少重复请求。
+- 趋势使用按月 `date_range` 聚合，与高赞样本解耦，避免采样偏差。
+
+## 隐私与安全
+
+- 服务只监听 `127.0.0.1`，不对外网开放。
+- 写操作要求同源 `Origin`；缺少或跨源返回 403。
+- 不收集遥测；除 Steam 与用户配置的 AI Base URL 外不发起外部请求。
+- 不保存作者昵称、SteamID、头像等个人信息；只保存公开评论、游戏元数据、聚合结果与报告。
+- Steam 评论是公开 UGC；请遵守 Valve/Steam 使用条款，不要批量再发布或用于骚扰。
+
+## 常见问题
+
+| 现象 | 处理 |
+| --- | --- |
+| 链接无效 / 找不到游戏 | 使用 `store.steampowered.com/app/<appid>`、`steamcommunity.com/app/<appid>` 或纯数字 AppID |
+| 预览匹配数为 0 | 放宽语言、时间、购买来源或客户端筛选 |
+| Steam 429 | 稍后重试；本地数据复用可避免重复请求 |
+| DeepSeek 401/403 | Key 无效或无权限；重新输入并测试连接 |
+| DeepSeek 429 | 降低样本量/分块，稍后重试 |
+| 端口冲突 | 设置 `PORT` 环境变量后重试 |
+| 想清理数据 | 在“本地数据”面板删除单个数据集或清空全部；也可直接删除数据目录 |
+
+## 项目结构
+
+```text
+web/        React + Vite + TypeScript 前端
+server/     Node + Express + TypeScript 后端
+data/       本地数据集与报告（运行时生成，gitignored）
+docs/       设计文档与三模型开发流水线说明
+```
+
+- 产品设计：[docs/superpowers/specs/2026-11-05-greview-design.md](docs/superpowers/specs/2026-11-05-greview-design.md)
+- 三模型开发流水线：[docs/PIPELINE.md](docs/PIPELINE.md)
+
+## 开发与验收
+
+- 自动化测试：后端 215 项 + 前端 70 项（当前版本；Windows 上有 1 项符号链接测试按平台显式跳过）。
+- 真实网络冒烟（Steam + 真实 DeepSeek Key）需要使用者在本机执行；自动化测试不依赖真实网络。
+- 本项目由 `greview-pipeline` 三模型流水线生成：Fable 负责前端设计与验收，GPT-6 负责后端架构与监督，DeepSeek 负责实现与修复。
+
+## License
+
+MIT。见 [LICENSE](LICENSE)。
+
+## 免责声明
+
+GReview 不是 Valve 官方产品，与 Valve 无关联。Steam 评论是玩家公开内容；请遵守 Steam 使用条款与当地法律，合理控制请求频率。报告中的“口碑表现”不代表销量、收入或商业成败。

@@ -1,0 +1,78 @@
+/* GReview design tokens — 与设计文档/Fable 设计保持一致 */
+:root {
+  color-scheme: dark;
+
+  /* 背景 */
+  --bg: #0b0f14;
+  --bg-subtle: #121821;
+  --panel: #1a2332;
+  --panel-elevated: #202b3d;
+
+  /* 边框 */
+  --border: #1f2937;
+  --border-strong: #374151;
+
+  /* 文本 */
+  --text: #e5e7eb;
+  --text-secondary: #94a3b8;
+  /* 信息性小字（.dim / hint）在面板 #1a2332 与 #202b3d 上均 ≥4.5:1（WCAG AA）。 */
+  --text-muted: #8494a8;
+  --text-disabled: #475569;
+
+  /* 强调与语义色 */
+  --accent: #38bdf8;
+  --accent-hover: #0ea5e9;
+  --accent-soft: rgba(56, 189, 248, 0.12);
+  --positive: #22c55e;
+  --positive-light: #4ade80;
+  --positive-soft: rgba(34, 197, 94, 0.12);
+  --negative: #f87171;
+  --negative-light: #f87171;
+  --negative-soft: rgba(248, 113, 113, 0.12);
+  --warning: #f59e0b;
+  --warning-light: #fbbf24;
+  --warning-soft: rgba(245, 158, 11, 0.12);
+  --neutral: #6b7280;
+  --neutral-light: #9ca3af;
+  --neutral-soft: rgba(107, 114, 128, 0.15);
+
+  /* 字体 */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'Microsoft YaHei',
+    sans-serif;
+  --font-mono: 'Consolas', 'Monaco', 'SFMono-Regular', 'Courier New', monospace;
+
+  --fs-display: 24px;
+  --lh-display: 1.33;
+  --fs-title-lg: 20px;
+  --lh-title-lg: 1.4;
+  --fs-title: 16px;
+  --lh-title: 1.5;
+  --fs-body: 14px;
+  --lh-body: 1.6;
+  --fs-small: 12px;
+  --lh-small: 1.5;
+  --fs-label: 12px;
+
+  /* 间距 */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-base: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  --panel-width: 360px;
+  --report-width: 1100px;
+  --card-padding: 16px;
+
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --shadow-panel: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-popover: 0 18px 48px rgba(0, 0, 0, 0.55);
+
+  --header-height: 57px;
+  --transition: 160ms ease;
+}
