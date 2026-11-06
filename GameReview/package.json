@@ -2,6 +2,7 @@
   "name": "greview",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "GReview: local Steam review analysis with official reputation trends and DeepSeek AI.",
   "workspaces": [
     "web",
