@@ -2,6 +2,11 @@
 .greview/
 .greview-tmp/
 
+# Local development pipeline (not part of the published app)
+/.claude/
+/tools/
+/docs/
+
 # Dependencies & builds
 node_modules/
 dist/

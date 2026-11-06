@@ -10,21 +10,18 @@ No account, no hosted server, no telemetry. Runs on `127.0.0.1` and stores datas
 
 ## Repository layout
 
-This repository contains both the application and the three-model development pipeline used to build it:
-
 ```text
-GameReview/          # The application — start here
+GameReview/          # The application
   web/               # React + Vite + TypeScript frontend
   server/            # Node + Express + TypeScript backend
   docs/              # Acceptance status and known issues
   README.md          # Full application documentation
-.claude/             # Three-model pipeline commands/workflows
-tools/               # GPT-6 and Fable bridges used by the pipeline
-docs/                # Product design spec and pipeline documentation
 .github/workflows/   # CI (runs in GameReview/)
+LICENSE
+README.md
 ```
 
-The pipeline is development infrastructure; the shippable software lives entirely in [`GameReview/`](GameReview/).
+The application lives entirely in [`GameReview/`](GameReview/).
 
 ## Quick start
 
@@ -59,9 +56,7 @@ You will need a [DeepSeek API key](https://platform.deepseek.com/). The key is s
 ## Documentation
 
 - [Application README](GameReview/README.md) — features, configuration, local data, privacy, troubleshooting
-- [Acceptance and known issues](GameReview/docs/ACCEPTANCE.md) — test status, R6 residual findings, deferred real-environment checks
-- [Product design spec](docs/superpowers/specs/2026-11-05-greview-design.md)
-- [Three-model development pipeline](docs/PIPELINE.md)
+- [Acceptance and known issues](GameReview/docs/ACCEPTANCE.md) — test status, known limitations, deferred real-environment checks
 
 ## License
 

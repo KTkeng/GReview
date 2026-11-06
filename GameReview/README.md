@@ -128,17 +128,14 @@ GameReview/
   docs/       验收状态与已知问题
 ```
 
-软件源码全部位于本目录；仓库根目录的 `.claude/`、`tools/`、`docs/` 是三模型开发流水线与设计文档，不属于运行时软件。
+软件源码全部位于本目录。
 
-- 产品设计：[../docs/superpowers/specs/2026-11-05-greview-design.md](../docs/superpowers/specs/2026-11-05-greview-design.md)
-- 三模型开发流水线：[../docs/PIPELINE.md](../docs/PIPELINE.md)
 - 验收与已知问题：[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
 
 ## 开发与验收
 
 - 自动化测试：后端 217 项 + 前端 70 项（当前版本；Windows 上有 1 项符号链接测试按平台显式跳过）。
 - 真实网络冒烟（Steam + 真实 DeepSeek Key）需要使用者在本机执行；自动化测试不依赖真实网络。
-- 本项目由 `greview-pipeline` 三模型流水线生成：Fable 负责前端设计与验收，GPT-6 负责后端架构与监督，DeepSeek 负责实现与修复。
 
 ## License
 
