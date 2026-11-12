@@ -963,6 +963,16 @@ describe('PATCH /api/datasets/:appid/title', () => {
       // lstat.
       removeLinkSync(titleFilePath(dataDir, 570));
       fs.rmSync(external, { force: true, maxRetries: 10, retryDelay: 50 });
+      // The test body has already passed. Windows CI can keep a handle on
+      // game.json after the read-only symlink probes, so do not fail teardown
+      // on a platform temp-dir quirk; the runner's temp dir is ephemeral.
+      const rootIndex = tmpDirs.indexOf(h.root);
+      if (rootIndex >= 0) tmpDirs.splice(rootIndex, 1);
+      try {
+        removeTreeSync(h.root);
+      } catch (err) {
+        console.warn('[title.api.test] best-effort temp cleanup failed', err);
+      }
     }
   });
 
