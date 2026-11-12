@@ -39,8 +39,20 @@ function removeTreeSync(target: string): void {
   try {
     stat = fs.lstatSync(target);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw err;
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // Windows may reject lstat on a dangling file symlink. Try removing the
+      // link entry itself so the parent directory can be removed; a genuinely
+      // missing path simply fails both attempts with ENOENT.
+      try {
+        fs.unlinkSync(target);
+        return;
+      } catch {}
+      try {
+        fs.rmdirSync(target);
+        return;
+      } catch {}
+    }
+    return;
   }
 
   if (stat.isSymbolicLink()) {
@@ -900,7 +912,10 @@ describe('PATCH /api/datasets/:appid/title', () => {
     const analysisHash = reportsOf(h.config)[0].replace(/\.json$/, '');
     const dataDir = h.config.dataDir;
 
-    const external = path.join(h.root, 'outside-title.json');
+    // Keep the target in a separate temp dir so it is still present when the
+    // data tree's symlink is cleaned up (a dangling link can break lstat on
+    // Windows).
+    const external = path.join(tmpDir(), 'outside-title.json');
     const externalBody = JSON.stringify({
       schemaVersion: 1,
       appid: 570,

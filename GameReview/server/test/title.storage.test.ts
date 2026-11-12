@@ -66,8 +66,20 @@ function removeTreeSync(target: string): void {
   try {
     stat = fs.lstatSync(target);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw err;
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // Windows may reject lstat on a dangling file symlink. Try removing the
+      // link entry itself so the parent directory can be removed; a genuinely
+      // missing path simply fails both attempts with ENOENT.
+      try {
+        fs.unlinkSync(target);
+        return;
+      } catch {}
+      try {
+        fs.rmdirSync(target);
+        return;
+      } catch {}
+    }
+    return;
   }
 
   if (stat.isSymbolicLink()) {
