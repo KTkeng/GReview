@@ -80,7 +80,14 @@ function removeTreeSync(target: string): void {
     }
     for (const entry of entries) removeTreeSync(path.join(target, entry));
     // Every child (including link entries) is gone before the parent is removed.
-    fs.rmdirSync(target, { maxRetries: 10, retryDelay: 50 });
+    try {
+      fs.rmdirSync(target, { maxRetries: 10, retryDelay: 50 });
+    } catch (err) {
+      try {
+        console.error('[removeTreeSync] leftover in', target, fs.readdirSync(target));
+      } catch {}
+      fs.rmSync(target, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    }
     return;
   }
 
@@ -230,6 +237,17 @@ function tryCreateFileLink(target: string, link: string): boolean {
     }
     return false;
   }
+}
+
+/** Remove a link entry (file symlink, directory symlink or junction). */
+function removeLinkSync(link: string): void {
+  try {
+    fs.unlinkSync(link);
+    return;
+  } catch {}
+  try {
+    fs.rmdirSync(link, { maxRetries: 10, retryDelay: 50 });
+  } catch {}
 }
 
 function reportsOf(config: ServerConfig, appid = 570): string[] {
@@ -926,18 +944,26 @@ describe('PATCH /api/datasets/:appid/title', () => {
     fs.writeFileSync(external, externalBody, 'utf8');
     if (!tryCreateFileLink(external, titleFilePath(dataDir, 570))) ctx.skip();
 
-    const responses = [
-      await request(h.app).get('/api/datasets').query({ dataDir }),
-      await request(h.app).post('/api/game/preview').set('Origin', ORIGIN).send({ appid: 570 }),
-      await patchTitle(h, 570, { customTitle: '不能写入', expectedRevision: 0 }),
-      await request(h.app).get(`/api/reports/570/${analysisHash}`).query({ dataDir }),
-    ];
-    for (const res of responses) {
-      expect(res.status).toBe(400);
-      expect(res.body.error.code).toBe('数据目录无效');
-      expect(JSON.stringify(res.body)).not.toContain('文件链接外部标题');
+    try {
+      const responses = [
+        await request(h.app).get('/api/datasets').query({ dataDir }),
+        await request(h.app).post('/api/game/preview').set('Origin', ORIGIN).send({ appid: 570 }),
+        await patchTitle(h, 570, { customTitle: '不能写入', expectedRevision: 0 }),
+        await request(h.app).get(`/api/reports/570/${analysisHash}`).query({ dataDir }),
+      ];
+      for (const res of responses) {
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('数据目录无效');
+        expect(JSON.stringify(res.body)).not.toContain('文件链接外部标题');
+      }
+      expect(fs.readFileSync(external, 'utf8')).toBe(externalBody);
+    } finally {
+      // Remove the link explicitly while its target still exists; Windows can
+      // otherwise leave a dangling reparse point that the generic walk cannot
+      // lstat.
+      removeLinkSync(titleFilePath(dataDir, 570));
+      fs.rmSync(external, { force: true, maxRetries: 10, retryDelay: 50 });
     }
-    expect(fs.readFileSync(external, 'utf8')).toBe(externalBody);
   });
 
   it('escapes Markdown titles and keeps the fixed download filename', async () => {
