@@ -53,19 +53,19 @@ export function jobRoutes(deps: JobRouteDeps): Router {
           forceTrend: body.data.forceTrend,
         },
       };
-      const { jobId } = deps.manager.createJob(request, apiKey, dataDir);
+      const { jobId } = await deps.manager.createJob(request, apiKey, dataDir);
       res.status(202).json({ jobId });
     }),
   );
 
-  router.get('/jobs/:id', (req, res) => {
-    const snapshot = deps.manager.getSnapshot(req.params.id);
+  router.get('/jobs/:id', asyncHandler(async (req, res) => {
+    const snapshot = await deps.manager.getSnapshot(req.params.id);
     res.json(snapshot);
-  });
+  }));
 
-  router.get('/jobs/:id/stream', (req: Request, res: Response, next: NextFunction) => {
+  router.get('/jobs/:id/stream', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     try {
-      deps.manager.getSnapshot(req.params.id);
+      await deps.manager.getSnapshot(req.params.id);
     } catch (err) {
       next(err);
       return;
@@ -108,17 +108,20 @@ export function jobRoutes(deps: JobRouteDeps): Router {
       return;
     }
     req.on('close', cleanup);
-  });
+  }));
 
   router.post('/jobs/:id/cancel', (req, res) => {
     deps.manager.cancel(req.params.id);
     res.json({ status: 'cancelled' });
   });
 
-  router.get('/jobs/:id/report', (req, res) => {
-    const report = deps.manager.getReport(req.params.id);
+  router.get('/jobs/:id/report', asyncHandler(async (req, res) => {
+    // Re-reads the job's fixed data directory so a title saved after the job
+    // completed is reflected here without mutating the stored report.
+    const report = await deps.manager.getServedReport(req.params.id);
+    res.setHeader('Cache-Control', 'no-store');
     res.json(report);
-  });
+  }));
 
   return router;
 }

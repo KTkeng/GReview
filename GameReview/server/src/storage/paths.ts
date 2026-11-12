@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { AppError } from '../lib/errors';
@@ -37,6 +38,56 @@ const FORBIDDEN_SEGMENTS = new Set([
   'server',
   'web',
 ]);
+
+function errnoOf(err: unknown): string | undefined {
+  return (err as NodeJS.ErrnoException | undefined)?.code;
+}
+
+/** Permission-class errno values: map to 503 存储不可写 on write/delete paths. */
+function isPermissionCode(code: string | undefined): boolean {
+  return code === 'EACCES' || code === 'EPERM' || code === 'EROFS';
+}
+
+/**
+ * Ordinary (non-security) read failure. Kept as INTERNAL so a report endpoint
+ * answers 500 rather than pretending the path is invalid (400) or missing (404).
+ * The original errno is preserved internally for callers that must tell a
+ * permission problem from an I/O problem.
+ */
+function readFailure(err: unknown, detail: string): AppError {
+  return new AppError('INTERNAL', detail, undefined, { causeCode: errnoOf(err) });
+}
+
+/** Ordinary write/delete failure: permission-class errnos are 503, everything else 500. */
+function writeFailure(err: unknown, detail: string): AppError {
+  const code = errnoOf(err);
+  if (isPermissionCode(code)) {
+    return new AppError('STORAGE_NOT_WRITABLE', detail, undefined, { causeCode: code });
+  }
+  return new AppError('INTERNAL', detail, undefined, { causeCode: code });
+}
+
+// ---------------------------------------------------------------------------
+// Test hooks: inject a *real* ordinary filesystem failure (permission, I/O)
+// where the platform cannot produce one deterministically (for example,
+// chmod-based permission denial on Windows). Security checks are unaffected.
+// ---------------------------------------------------------------------------
+
+let containedReadOpenError: ((target: string) => NodeJS.ErrnoException | null) | null = null;
+
+/** @internal Test hook: make the open() inside openContainedRead fail. */
+export function setContainedReadOpenErrorForTests(
+  hook: ((target: string) => NodeJS.ErrnoException | null) | null,
+): void {
+  containedReadOpenError = hook;
+}
+
+let dataDirProbeError: NodeJS.ErrnoException | null = null;
+
+/** @internal Test hook: make the realpath probe in assertSafeExistingDataDir fail. */
+export function setDataDirProbeErrorForTests(err: NodeJS.ErrnoException | null): void {
+  dataDirProbeError = err;
+}
 
 function normalizeForCompare(p: string): string {
   return path.resolve(p).replace(/[\\/]+/g, '/').toLowerCase();
@@ -134,9 +185,20 @@ export async function assertSafeExistingDataDir(
   const resolved = path.resolve(input);
   let realPath: string;
   try {
+    if (dataDirProbeError) throw dataDirProbeError;
     realPath = await fsp.realpath(resolved);
-  } catch {
-    throw new AppError('DATA_DIR_INVALID', '数据目录不存在或无法解析');
+  } catch (err) {
+    const code = errnoOf(err);
+    // Only a genuinely absent path means "does not exist" (callers map that to
+    // a 404/empty list). Permission and I/O failures must stay distinguishable:
+    // permission -> 503, other I/O -> 500.
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new AppError('DATA_DIR_INVALID', '数据目录不存在或无法解析');
+    }
+    if (isPermissionCode(code)) {
+      throw new AppError('STORAGE_NOT_WRITABLE', '数据目录不可访问', undefined, { causeCode: code });
+    }
+    throw readFailure(err, '数据目录无法访问');
   }
   let realProjectRoot = projectRoot;
   try {
@@ -185,8 +247,12 @@ async function assertSafeContainedPath(
   let realRoot: string;
   try {
     realRoot = await fsp.realpath(root);
-  } catch {
-    throw new AppError('DATA_DIR_INVALID', '数据目录不存在或无法解析');
+  } catch (err) {
+    const code = errnoOf(err);
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new AppError('DATA_DIR_INVALID', '数据目录不存在或无法解析');
+    }
+    throw writeFailure(err, '数据目录无法访问');
   }
   const segments = path.relative(root, resolved).split(path.sep).filter(Boolean);
   let current = root;
@@ -196,8 +262,10 @@ async function assertSafeContainedPath(
     try {
       stat = await fsp.lstat(current);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') break;
-      throw new AppError('DATA_DIR_INVALID', `无法检查${action}路径 ${segments[i]}`);
+      const code = errnoOf(err);
+      if (code === 'ENOENT') break;
+      if (code === 'ENOTDIR') throw new AppError('DATA_DIR_INVALID', `无法检查${action}路径 ${segments[i]}`);
+      throw writeFailure(err, `无法检查${action}路径 ${segments[i]}`);
     }
     if (stat.isSymbolicLink()) {
       throw new AppError('DATA_DIR_FORBIDDEN', `${action}路径包含符号链接/联接点 ${segments[i]}，拒绝${action}`);
@@ -208,8 +276,11 @@ async function assertSafeContainedPath(
     let real: string;
     try {
       real = await fsp.realpath(current);
-    } catch {
-      throw new AppError('DATA_DIR_INVALID', `${action}路径层级 ${segments[i]} 无法解析`);
+    } catch (err) {
+      const code = errnoOf(err);
+      if (code === 'ENOENT') throw new AppError('DATA_DIR_INVALID', `${action}路径层级 ${segments[i]} 无法解析`);
+      if (code === 'ENOTDIR') throw new AppError('DATA_DIR_INVALID', `${action}路径层级 ${segments[i]} 不是目录`);
+      throw writeFailure(err, `${action}路径层级 ${segments[i]} 无法解析`);
     }
     if (!isAncestorOrSame(realRoot, real)) {
       throw new AppError('DATA_DIR_FORBIDDEN', `${action}路径通过链接指向数据目录之外：${segments[i]}`);
@@ -232,6 +303,139 @@ export async function assertSafeDeletePath(dataDir: string, target: string): Pro
   await assertSafeContainedPath(dataDir, target, '删除');
 }
 
+/**
+ * Validate a read target before touching it: the data root must resolve, every
+ * component between the root and the target must be a plain directory, and no
+ * component (including the final file) may be a symlink or Windows junction.
+ * Returns false only when the target is genuinely missing; containment or
+ * permissions problems throw so security failures can never be reported as
+ * "not found" or "corrupt file".
+ */
+export async function assertSafeReadPath(dataDir: string, target: string): Promise<boolean> {
+  const root = path.resolve(dataDir);
+  const resolved = path.resolve(target);
+  if (!isStrictlyInside(resolved, root)) {
+    throw new AppError('DATA_DIR_FORBIDDEN', '读取目标不在数据目录内');
+  }
+  let realRoot: string;
+  try {
+    realRoot = await fsp.realpath(root);
+  } catch (err) {
+    const code = errnoOf(err);
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    // The root exists but cannot be resolved (permissions, I/O): that is an
+    // ordinary read failure (500), not a missing file and not a bad path (400).
+    throw readFailure(err, '读取数据目录失败');
+  }
+  const segments = path.relative(root, resolved).split(path.sep).filter(Boolean);
+  let current = root;
+  for (let i = 0; i < segments.length; i += 1) {
+    current = path.join(current, segments[i]);
+    let stat;
+    try {
+      stat = await fsp.lstat(current);
+    } catch (err) {
+      const code = errnoOf(err);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+      throw readFailure(err, '无法检查读取路径');
+    }
+    if (stat.isSymbolicLink()) {
+      throw new AppError('DATA_DIR_FORBIDDEN', '读取路径包含符号链接/联接点，拒绝读取');
+    }
+    if (i < segments.length - 1 && !stat.isDirectory()) {
+      throw new AppError('DATA_DIR_INVALID', '读取路径层级不是目录');
+    }
+    let real: string;
+    try {
+      real = await fsp.realpath(current);
+    } catch (err) {
+      const code = errnoOf(err);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+      throw readFailure(err, '读取路径层级无法解析');
+    }
+    if (!isAncestorOrSame(realRoot, real)) {
+      throw new AppError('DATA_DIR_FORBIDDEN', '读取路径通过链接指向数据目录之外');
+    }
+  }
+  return true;
+}
+
+const READ_NOFOLLOW =
+  typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
+
+/**
+ * Open a validated read target. The path is checked component by component
+ * first, then opened read-only without following a final symlink where the
+ * platform supports it. Returns null when the target is missing.
+ */
+export async function openContainedRead(
+  dataDir: string,
+  target: string,
+): Promise<fsp.FileHandle | null> {
+  const exists = await assertSafeReadPath(dataDir, target);
+  if (!exists) return null;
+  let handle: fsp.FileHandle;
+  try {
+    const injected = containedReadOpenError?.(target) ?? null;
+    if (injected) throw injected;
+    handle = await fsp.open(target, fs.constants.O_RDONLY | READ_NOFOLLOW);
+  } catch (err) {
+    const code = errnoOf(err);
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    if (code === 'ELOOP') {
+      throw new AppError('DATA_DIR_FORBIDDEN', '读取目标包含符号链接，拒绝读取');
+    }
+    // Permission or I/O failure: ordinary read failure, never 404/400.
+    throw readFailure(err, '读取目标失败');
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) {
+      throw new AppError('DATA_DIR_FORBIDDEN', '读取目标不是普通文件');
+    }
+    return handle;
+  } catch (err) {
+    await handle.close().catch(() => undefined);
+    throw err;
+  }
+}
+
+/** Read a contained UTF-8 text file; null when missing. */
+export async function readContainedText(dataDir: string, target: string): Promise<string | null> {
+  const handle = await openContainedRead(dataDir, target);
+  if (!handle) return null;
+  try {
+    return await handle.readFile('utf8');
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+/** Read and parse a contained JSON file; null when missing. Parse errors throw. */
+export async function readContainedJson<T>(dataDir: string, target: string): Promise<T | null> {
+  const text = await readContainedText(dataDir, target);
+  if (text === null) return null;
+  return JSON.parse(text) as T;
+}
+
+/**
+ * Safely list a contained directory. Returns null when it does not exist.
+ * Link escapes throw; other read failures become a path-free INTERNAL error.
+ */
+export async function readContainedDir(
+  dataDir: string,
+  dir: string,
+): Promise<import('node:fs').Dirent[] | null> {
+  const exists = await assertSafeReadPath(dataDir, dir);
+  if (!exists) return null;
+  try {
+    return await fsp.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new AppError('INTERNAL', '读取数据目录失败');
+  }
+}
+
 export async function readDataDirMarker(dir: string): Promise<DataDirMarker | null> {
   try {
     const raw = await readJsonFile<Partial<DataDirMarker>>(path.join(dir, DATA_DIR_MARKER));
@@ -251,7 +455,7 @@ async function writeDataDirMarker(dir: string): Promise<void> {
   await atomicWriteJson(target, marker);
 }
 
-const APP_DIR_ENTRIES = new Set(['reviews', 'trends', 'reports', 'game.json']);
+const APP_DIR_ENTRIES = new Set(['reviews', 'trends', 'reports', 'game.json', 'title.json']);
 
 /** Recognize an app directory created by this tool; used when adopting old data. */
 async function looksLikeGreviewAppDir(dir: string): Promise<boolean> {
@@ -428,9 +632,21 @@ export async function ensureDataDir(input?: string, opts: DataDirOptions = {}): 
   }
 }
 
+export const APPID_MIN = 1;
+export const APPID_MAX = 4294967295;
+
+/**
+ * Parse a path AppID. Only a plain decimal representation in the full Steam
+ * range is accepted: hex/exponent/whitespace/decimal strings must not be
+ * silently coerced by Number().
+ */
 export function assertAppIdSegment(value: unknown): number {
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isSafeInteger(n) || n <= 0 || n > 2147483647) throw new AppError('INVALID_URL');
+  const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value : '';
+  if (!/^\d{1,10}$/.test(raw)) throw new AppError('INVALID_PARAMS', 'AppID 必须是十进制正整数');
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < APPID_MIN || n > APPID_MAX) {
+    throw new AppError('INVALID_PARAMS', 'AppID 超出允许范围');
+  }
   return n;
 }
 

@@ -1,11 +1,16 @@
-import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AppError } from '../lib/errors';
+import { AppError, isAppError, isSecurityError } from '../lib/errors';
 import { canonicalJson, shortHash } from '../lib/hash';
-import { atomicWriteFile, atomicWriteJson, readJsonFile } from '../lib/fs';
+import { atomicWriteFile, atomicWriteJson } from '../lib/fs';
 import type { DatasetMeta, GameMeta, Report, Review, Theme, ThemeQuote, TopReview } from '../types';
-import { readDataset, reportsDir } from './dataset';
-import { assertSafeWritePath } from './paths';
+import { readDataset, reportsDir, reviewsDir } from './dataset';
+import {
+  assertSafeReadPath,
+  assertSafeWritePath,
+  readContainedDir,
+  readContainedText,
+} from './paths';
+import { runStorageMutationHook, withStorageLock } from './lock';
 import { reportToMarkdown } from './markdown';
 import {
   buildNumericFacts,
@@ -68,11 +73,22 @@ export function reportFilePaths(dataDir: string, appid: number, analysisHash: st
   return { json: path.join(dir, `${analysisHash}.json`), md: path.join(dir, `${analysisHash}.md`) };
 }
 
+export interface SaveReportOptions {
+  /**
+   * Job epoch. When provided, the report is only written if the dataset it
+   * was generated from still exists — a delete/clear that happened while the
+   * AI call was running must not resurrect a report (and then remove the title
+   * while leaving orphan output behind).
+   */
+  epoch?: number;
+}
+
 export async function saveReport(
   dataDir: string,
   appid: number,
   analysisHash: string,
   report: Report,
+  options: SaveReportOptions = {},
 ): Promise<void> {
   // A report is public output: never persist narrative/caveats that have not
   // passed the runtime numeric/structure validation (review Major 3/5).
@@ -80,11 +96,27 @@ export async function saveReport(
     throw new AppError('INTERNAL', '报告内容未通过运行时校验，拒绝写入');
   }
   const paths = reportFilePaths(dataDir, appid, analysisHash);
-  // Reject symlink/junction levels such as 570/reports before writing.
-  await assertSafeWritePath(dataDir, paths.json);
-  await assertSafeWritePath(dataDir, paths.md);
-  await atomicWriteJson(paths.json, report);
-  await atomicWriteFile(paths.md, `${reportToMarkdown(report)}\n`);
+  await withStorageLock(
+    dataDir,
+    async () => {
+      await runStorageMutationHook({ operation: 'saveReport', dataDir, appid });
+      if (options.epoch !== undefined) {
+        const reviewsHash = report.methodology?.reviewsHash;
+        if (reviewsHash && /^[a-f0-9]{16}$/.test(reviewsHash)) {
+          const datasetExists = await assertSafeReadPath(dataDir, reviewsDir(dataDir, appid, reviewsHash));
+          if (!datasetExists) {
+            throw new AppError('CANCELLED', '评论数据集已被删除，报告未保存');
+          }
+        }
+      }
+      // Reject symlink/junction levels such as 570/reports before writing.
+      await assertSafeWritePath(dataDir, paths.json);
+      await assertSafeWritePath(dataDir, paths.md);
+      await atomicWriteJson(paths.json, report);
+      await atomicWriteFile(paths.md, `${reportToMarkdown(report)}\n`);
+    },
+    { epoch: options.epoch },
+  );
 }
 
 function isValidThemeQuote(value: unknown): value is ThemeQuote {
@@ -348,13 +380,56 @@ export function isValidReport(value: unknown, expectedAppid?: number): value is 
   return reportNarrativeIsSafe(value as unknown as Report);
 }
 
-export async function readReport(dataDir: string, appid: number, analysisHash: string): Promise<Report | null> {
-  if (!/^[a-f0-9]{16}$/.test(analysisHash)) return null;
+/**
+ * Distinguishes the three outcomes the report endpoint must tell apart:
+ * genuinely missing (404), present but corrupt (500), readable and valid.
+ * Path-safety failures (link/traversal) and ordinary read failures
+ * (permission/I/O) are thrown: the former as DATA_DIR_FORBIDDEN, the latter as
+ * INTERNAL. Neither may masquerade as "not found".
+ */
+export type ReportReadState =
+  | { status: 'ok'; report: Report }
+  | { status: 'missing' }
+  | { status: 'corrupt'; reason: string };
+
+export async function readReportState(
+  dataDir: string,
+  appid: number,
+  analysisHash: string,
+): Promise<ReportReadState> {
+  if (!/^[a-f0-9]{16}$/.test(analysisHash)) return { status: 'missing' };
+  let text: string | null;
   try {
-    const report = await readJsonFile<unknown>(reportFilePaths(dataDir, appid, analysisHash).json);
-    if (!isValidReport(report, appid)) return null;
-    return report;
+    text = await readContainedText(dataDir, reportFilePaths(dataDir, appid, analysisHash).json);
+  } catch (err) {
+    // Link/traversal and ordinary read failures must never become 404.
+    if (isAppError(err)) throw err;
+    return { status: 'corrupt', reason: 'JSON 无法解析' };
+  }
+  // A missing file is the only 404. A file whose content is literal `null` is
+  // present but corrupt and must be a 500-class failure.
+  if (text === null) return { status: 'missing' };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
   } catch {
+    return { status: 'corrupt', reason: 'JSON 无法解析' };
+  }
+  if (!isValidReport(raw, appid)) return { status: 'corrupt', reason: '内容不符合报告模型' };
+  return { status: 'ok', report: raw };
+}
+
+/**
+ * Tolerant entry for reuse flows (job cache reuse, preview hints): a missing,
+ * corrupt or unreadable report simply means "not reusable". Security failures
+ * still propagate so a compromised data root is never silently ignored.
+ */
+export async function readReport(dataDir: string, appid: number, analysisHash: string): Promise<Report | null> {
+  try {
+    const state = await readReportState(dataDir, appid, analysisHash);
+    return state.status === 'ok' ? state.report : null;
+  } catch (err) {
+    if (isSecurityError(err)) throw err;
     return null;
   }
 }
@@ -402,27 +477,40 @@ export function cloneReportWithServed(report: Report, topReviews: TopReview[], n
   return clone;
 }
 
-/** Read a stored report for API serving, rebuilding Top N from the dataset in memory only. */
+/**
+ * Read a stored report for API serving, rebuilding Top N from the dataset in
+ * memory only. Unlike the tolerant `readReport`, a present-but-corrupt report
+ * is an explicit INTERNAL failure (the contract requires 500, not 404), and an
+ * ordinary read failure propagates as INTERNAL from the path layer.
+ */
 export async function readServedReport(
   dataDir: string,
   appid: number,
   analysisHash: string,
   topN: number,
 ): Promise<Report | null> {
-  const report = await readReport(dataDir, appid, analysisHash);
-  if (!report) return null;
+  const state = await readReportState(dataDir, appid, analysisHash);
+  if (state.status === 'missing') return null;
+  if (state.status === 'corrupt') {
+    throw new AppError('INTERNAL', `报告损坏：${state.reason}`);
+  }
+  const report = state.report;
   const reviewsHash = report.methodology?.reviewsHash;
   const topReviews = await rebuildTopReviewsFromDataset(dataDir, appid, reviewsHash, topN, report.topReviews);
   return cloneReportWithServed(report, topReviews);
 }
 
 export async function listReportFiles(dataDir: string, appid: number): Promise<string[]> {
-  try {
-    const files = await fsp.readdir(reportsDir(dataDir, appid));
-    return files.filter((f) => /^[a-f0-9]{16}\.json$/.test(f)).map((f) => f.replace(/\.json$/, ''));
-  } catch {
-    return [];
+  const files = await readContainedDir(dataDir, reportsDir(dataDir, appid));
+  if (!files) return [];
+  for (const entry of files) {
+    if (entry.isSymbolicLink() && /^[a-f0-9]{16}\.json$/.test(entry.name)) {
+      throw new AppError('DATA_DIR_FORBIDDEN', '报告目录包含符号链接/联接点');
+    }
   }
+  return files
+    .filter((entry) => entry.isFile() && /^[a-f0-9]{16}\.json$/.test(entry.name))
+    .map((entry) => entry.name.replace(/\.json$/, ''));
 }
 
 /** Find a usable dataset for a preview by appid and hash; never returns corrupted data. */

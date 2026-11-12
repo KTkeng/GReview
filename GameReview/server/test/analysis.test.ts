@@ -21,7 +21,7 @@ import {
 import { validateEvidence, splitThemes, isQuoteSubstring, normalizeForMatch } from '../src/analysis/evidence';
 import { buildReport, refreshReport } from '../src/analysis/report';
 import { reportToMarkdown } from '../src/storage/markdown';
-import { analyzeReviews } from '../src/analysis/pipeline';
+import { analyzeReviews, ANALYSIS_MAX_TOKENS, ANALYSIS_THINKING_MAX_TOKENS } from '../src/analysis/pipeline';
 import { parseAnalysis } from '../src/ai/schema';
 import type { AIChatRequest } from '../src/ai/deepseek';
 import type { TrendDataset } from '../src/types';
@@ -284,11 +284,22 @@ describe('AI analysis pipeline', () => {
       onProgress: (p) => progress.push(p.stage),
     });
     expect(ai.calls).toHaveLength(1);
-    expect(ai.calls[0].maxTokens).toBe(8192);
+    expect(ai.calls[0].maxTokens).toBe(ANALYSIS_THINKING_MAX_TOKENS);
     expect(result.usedForAI).toBe(3);
     expect(result.analysis.themes).toHaveLength(2);
     expect(result.usage).toEqual({ input: 100, output: 50 });
     expect(progress).toContain('validating');
+  });
+
+  it('uses the base output budget when thinking is off', async () => {
+    const ai = new FakeAIProvider(SAMPLE_ANALYSIS);
+    await analyzeReviews({
+      ...input,
+      ai,
+      aiOptions: { ...AI_OPTIONS, thinking: false },
+      includeTranslations: false,
+    });
+    expect(ai.calls[0].maxTokens).toBe(ANALYSIS_MAX_TOKENS);
   });
 
   it('throws AI_INVALID_RESPONSE when every theme loses its evidence', async () => {
@@ -336,6 +347,8 @@ describe('AI analysis pipeline', () => {
       maxChunks: 10,
     });
     expect(ai.calls).toHaveLength(5); // 3 map + merge + final
+    // The thinking budget applies to every stage, not only the holistic call.
+    expect(ai.calls.every((c) => c.maxTokens === ANALYSIS_THINKING_MAX_TOKENS)).toBe(true);
     expect(result.analysis.themes.some((t) => t.name === '战斗手感')).toBe(true);
     expect(result.analysis.themes.some((t) => t.name === '全新主题')).toBe(false);
   });

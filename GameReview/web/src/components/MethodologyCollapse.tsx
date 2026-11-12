@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Report } from '../types';
+import { gameTitleInfo } from '../lib/gameTitle';
 import {
   ANALYSIS_SOURCE_LABELS,
   CONFIDENCE_LABELS,
@@ -29,6 +30,7 @@ export function MethodologyCollapse({ report }: MethodologyCollapseProps) {
   const tokenUsage = sample?.tokenUsage;
   const filters = sample?.filters;
   const timezone = (report.trend as { timezone?: string } | undefined)?.timezone;
+  const title = gameTitleInfo(report.game, report.game?.appid);
 
   // 打印时自动展开方法论，打印结束后恢复原状态
   useEffect(() => {
@@ -130,6 +132,12 @@ export function MethodologyCollapse({ report }: MethodologyCollapseProps) {
             <Meta label="数据集抓取时间" value={formatDateTime(methodology?.datasetFetchedAt)} />
             <Meta label="报告版本" value={report.version} mono />
             <Meta label="生成器" value={methodology?.generatedBy ?? 'GReview'} />
+            {title.isCustom ? (
+              <Meta
+                label="游戏标题"
+                value={`${title.customTitle ?? ''}（Steam 原名：${title.steamName ?? '未获取'}）`}
+              />
+            ) : null}
             {timezone ? <Meta label="趋势时区" value={timezone} mono /> : null}
           </div>
         </div>

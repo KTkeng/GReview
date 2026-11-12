@@ -34,8 +34,24 @@ export function createApp(deps: AppDeps): express.Express {
 
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '2mb' }));
+  // Host/Origin checks come first so hostile requests are rejected before a
+  // request body is parsed or buffered.
   app.use(originMiddleware(config.port));
+  // The title endpoint has a strict 4 KiB body limit; this path-scoped parser
+  // runs first and marks the body as parsed, so the global parser below skips
+  // it. Express routing is case-insensitive and accepts a trailing slash, so
+  // this matcher must use the same rules — otherwise `PATCH .../TITLE` would
+  // fall through to the 2 MB parser and bypass the contract limit.
+  const titleJsonParser = express.json({ limit: '4kb' });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const requestPath = req.path.toLowerCase();
+    if (req.method === 'PATCH' && /^\/api\/datasets\/[^/]+\/title\/?$/.test(requestPath)) {
+      titleJsonParser(req, res, next);
+      return;
+    }
+    next();
+  });
+  app.use(express.json({ limit: '2mb' }));
   app.use('/api', createApiRouter({ config, steam, manager, aiFactory }));
 
   // Production static hosting of the built frontend; same origin, SPA fallback.

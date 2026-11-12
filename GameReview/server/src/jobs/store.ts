@@ -30,6 +30,8 @@ export interface JobRecord {
   abort: AbortController;
   request: CreateJobRequest;
   dataDir: string;
+  /** Storage epoch captured at job creation; a clear-all bump cancels the job. */
+  storageEpoch: number;
   createdAt: string;
   updatedAt: string;
   finishedAt?: string;
@@ -69,7 +71,7 @@ export class JobStore {
     return n;
   }
 
-  create(input: { request: CreateJobRequest; apiKey?: string; dataDir: string }): JobRecord {
+  create(input: { request: CreateJobRequest; apiKey?: string; dataDir: string; storageEpoch?: number }): JobRecord {
     this.cleanupExpired();
     if (this.activeCount() >= this.maxActive) {
       throw new AppError('JOB_LIMIT', `同时最多 ${this.maxActive} 个任务`);
@@ -86,6 +88,7 @@ export class JobStore {
       abort: new AbortController(),
       request: input.request,
       dataDir: input.dataDir,
+      storageEpoch: input.storageEpoch ?? 0,
       createdAt: ts,
       updatedAt: ts,
     };
@@ -220,7 +223,7 @@ export class JobStore {
   getReport(id: string): Report {
     const record = this.require(id);
     if (record.status !== 'completed' || !record.report) {
-      throw new AppError('CONFLICT', '任务尚未完成或已取消');
+      throw new AppError('JOB_NOT_COMPLETED', '任务尚未完成或已取消');
     }
     return record.report;
   }

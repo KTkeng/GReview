@@ -50,6 +50,29 @@ export interface GameMeta {
   [key: string]: unknown;
 }
 
+/** 契约 GamePresentation.titleSource 的枚举值（兼容旧后端的英文枚举）。 */
+export type TitleSource = '自定义' | '自动读取' | '编号占位' | 'custom' | 'steam' | 'placeholder';
+
+/**
+ * 后端统一展示模型：列表、详情、预览、复用提示、任务报告与已保存报告
+ * 均通过同一解析器组装这些字段。`name` 恒等于 `displayTitle`。
+ */
+export interface GamePresentation extends GameMeta {
+  appid: number;
+  name: string;
+  steamName: string | null;
+  customTitle: string | null;
+  displayTitle: string;
+  titleSource: TitleSource;
+  /** 非负安全整数；标题文件缺失时为 0，损坏时为 null。 */
+  titleRevision: number | null;
+  titleUpdatedAt: string | null;
+  titleEditable: boolean;
+  coverUrl: string | null;
+  coverPlaceholder: string;
+  warnings: string[];
+}
+
 export interface SteamSummary {
   total: number;
   positive: number;
@@ -72,6 +95,8 @@ export interface CostEstimate {
 
 export interface ReusableDataset {
   reviewsHash?: string;
+  appid?: number;
+  game?: GamePresentation | GameMeta | string;
   reviewCount: number;
   fetchedAt: string;
   trendCoverage?: { start: string; end: string; note?: string };
@@ -80,6 +105,8 @@ export interface ReusableDataset {
 
 export interface ReusableReport {
   analysisHash?: string;
+  appid?: number;
+  game?: GamePresentation | GameMeta | string;
   generatedAt: string;
   reportCount?: number;
   /** 后端只在 analysisHash 完全命中（数据集/趋势/AI 选项一致）时返回 true。 */
@@ -300,26 +327,44 @@ export interface SseStatusPayload {
 export interface ApiErrorPayload {
   code: string;
   message: string;
+  field?: string;
   detail?: unknown;
+  /** 仅在 409 标题版本冲突时返回；前端不得用它自动覆盖用户草稿。 */
+  currentGame?: GamePresentation;
 }
 
 /* ---------- 本地数据 ---------- */
 
 export interface DatasetSummary {
   appid: number;
-  game: GameMeta | string;
+  game: GamePresentation | GameMeta | string;
   reviewsHash: string;
   reviewCount: number;
-  fetchedAt: string;
+  /** 后端契约允许 null（损坏数据集或缺失抓取时间）。 */
+  fetchedAt: string | null;
   trendCoverage?: { start: string; end: string };
   reportCount: number;
-  bytes: number;
-  status: 'complete' | 'corrupted' | 'incomplete' | string;
+  /** 兼容旧后端字段 `bytes`；新契约字段为 `sizeBytes`。 */
+  bytes?: number;
+  sizeBytes?: number;
+  status: 'complete' | 'corrupted' | 'incomplete' | '完整' | '损坏' | string;
 }
 
 export interface DatasetListResponse {
   dataDir: string;
   datasets: DatasetSummary[];
+}
+
+/** PATCH /api/datasets/:appid/title 的严格请求体（拒绝未知字段）。 */
+export interface TitleUpdateRequest {
+  customTitle: string | null;
+  expectedRevision: number;
+}
+
+/** PATCH /api/datasets/:appid/title 的成功响应。 */
+export interface TitleUpdateResponse {
+  game: GamePresentation;
+  changed: boolean;
 }
 
 export interface DatasetReportRef {

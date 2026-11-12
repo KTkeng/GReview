@@ -6,7 +6,8 @@ import type { Express } from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app';
 import { JobManager, type AIFactory } from '../src/jobs/manager';
-import { silentLogger } from '../src/lib/logger';
+import { createLogger, silentLogger, type Logger } from '../src/lib/logger';
+import { setRootListErrorForTests } from '../src/storage/dataset';
 import type { JobSnapshot } from '../src/types';
 import type { AIProvider } from '../src/ai/deepseek';
 import { DeepSeekProvider } from '../src/ai/deepseek';
@@ -24,6 +25,7 @@ function tmpDir(): string {
 }
 
 afterEach(() => {
+  setRootListErrorForTests(null);
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -42,6 +44,7 @@ function build(opts: {
   ai?: FakeAIProvider;
   provider?: AIProvider;
   overrides?: Parameters<typeof makeConfig>[1];
+  logger?: Logger;
 } = {}): TestContext {
   const dir = tmpDir();
   const config = makeConfig(dir, opts.overrides ?? {});
@@ -52,8 +55,9 @@ function build(opts: {
     factoryCalls.push(factoryOpts);
     return opts.provider ?? ai;
   };
-  const manager = new JobManager({ config, steam, aiFactory, logger: silentLogger });
-  const app = createApp({ config, steam, aiFactory, manager, logger: silentLogger });
+  const logger = opts.logger ?? silentLogger;
+  const manager = new JobManager({ config, steam, aiFactory, logger });
+  const app = createApp({ config, steam, aiFactory, manager, logger });
   return { app, config, steam, ai, manager, factoryCalls, dir };
 }
 
@@ -114,7 +118,7 @@ describe('API basics, validation and origin protection', () => {
 
     const missing = await request(app).post('/api/game/resolve').set('Origin', ORIGIN).send({});
     expect(missing.status).toBe(400);
-    expect(missing.body.error.code).toBe('INVALID_REQUEST');
+    expect(missing.body.error.code).toBe('参数无效');
 
     const badJson = await request(app)
       .post('/api/game/resolve')
@@ -122,7 +126,7 @@ describe('API basics, validation and origin protection', () => {
       .set('Content-Type', 'application/json')
       .send('{"url":');
     expect(badJson.status).toBe(400);
-    expect(badJson.body.error.code).toBe('INVALID_REQUEST');
+    expect(badJson.body.error.code).toBe('参数无效');
 
     const badUrl = await request(app).post('/api/game/resolve').set('Origin', ORIGIN).send({ url: 'https://example.com/app/570' });
     expect(badUrl.status).toBe(400);
@@ -142,8 +146,63 @@ describe('API basics, validation and origin protection', () => {
       data: { dataDir: 'relative-data' },
     });
     expect(invalidDataDir.status).toBe(400);
-    expect(invalidDataDir.body.error.code).toBe('DATA_DIR_NOT_ABSOLUTE');
+    expect(invalidDataDir.body.error.code).toBe('数据目录无效');
     expect(steam.resolveCalls).toBe(0);
+  });
+
+  it('maps a missing data directory to an empty list but other readdir failures to 500', async () => {
+    const { app, config } = build();
+    const missing = await request(app)
+      .get('/api/datasets')
+      .query({ dataDir: path.join(config.dataDir, 'does-not-exist') });
+    expect(missing.status).toBe(200);
+    expect(missing.body.datasets).toEqual([]);
+
+    // A regular file is not a data directory: an I/O-class failure, not "no data".
+    const notDir = path.join(tmpDir(), 'plain-file');
+    fs.writeFileSync(notDir, 'not a directory', 'utf8');
+    const fileRes = await request(app).get('/api/datasets').query({ dataDir: notDir });
+    expect(fileRes.status).toBe(500);
+    expect(fileRes.body.error.code).toBe('INTERNAL');
+    expect(JSON.stringify(fileRes.body)).not.toContain(notDir);
+
+    // The root must exist so the injected readdir error is actually reached.
+    fs.mkdirSync(config.dataDir, { recursive: true });
+    for (const code of ['EACCES', 'EIO'] as const) {
+      setRootListErrorForTests(Object.assign(new Error(`injected ${code}`), { code }));
+      const res = await request(app).get('/api/datasets').query({ dataDir: config.dataDir });
+      expect(res.status, code).toBe(500);
+      expect(res.body.error.code, code).toBe('INTERNAL');
+      expect(res.body.error.message, code).toBe('服务器内部错误');
+      expect(JSON.stringify(res.body), code).not.toContain(config.dataDir);
+      expect(JSON.stringify(res.body), code).not.toContain(code);
+      setRootListErrorForTests(null);
+    }
+  });
+
+  it('keeps absolute paths, fake keys and English exception text out of error responses', async () => {
+    const logLines: string[] = [];
+    const h = build({ logger: createLogger('error', (line) => logLines.push(line)) });
+    const fakeKey = 'sk-leak-test-123456';
+    const absolutePath = path.join(h.dir, 'private', 'secret.json');
+    h.steam.resolveGame = async () => {
+      throw new Error(`ENOENT: no such file or directory, open '${absolutePath}' key=${fakeKey}`);
+    };
+
+    const res = await request(h.app).post('/api/game/resolve').set('Origin', ORIGIN).send({ url: '999' });
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatchObject({ code: 'INTERNAL', message: '服务器内部错误' });
+    expect(res.body.error.detail).toBeUndefined();
+    const body = JSON.stringify(res.body);
+    expect(body).not.toContain(absolutePath);
+    expect(body).not.toContain(fakeKey);
+    expect(body).not.toMatch(/ENOENT|no such file/i);
+
+    // Internal diagnostics are still logged, but through the redacting logger.
+    const logs = logLines.join('\n');
+    expect(logs).not.toContain(absolutePath);
+    expect(logs).not.toContain(fakeKey);
+    expect(logs).toContain('<path>');
   });
 
   it('allows same-origin writes, blocks cross-origin writes and emits no CORS headers', async () => {
@@ -153,7 +212,7 @@ describe('API basics, validation and origin protection', () => {
       .set('Origin', 'https://evil.example')
       .send({ url: 'https://store.steampowered.com/app/570/' });
     expect(cross.status).toBe(403);
-    expect(cross.body.error.code).toBe('FORBIDDEN');
+    expect(cross.body.error.code).toBe('来源不允许');
     expect(cross.headers['access-control-allow-origin']).toBeUndefined();
 
     const same = await request(app)
@@ -175,7 +234,7 @@ describe('API basics, validation and origin protection', () => {
     for (const method of ['post', 'put', 'patch', 'delete'] as const) {
       const res = await request(app)[method]('/api/game/resolve').send({ url: '570' });
       expect(res.status).toBe(403);
-      expect(res.body.error.code).toBe('FORBIDDEN');
+      expect(res.body.error.code).toBe('来源不允许');
     }
     const noOriginPreview = await request(app).post('/api/game/preview').send({ appid: 570 });
     expect(noOriginPreview.status).toBe(403);
@@ -219,7 +278,7 @@ describe('API basics, validation and origin protection', () => {
         .set('Origin', origin)
         .send({ url: '570' });
       expect(res.status, origin).toBe(403);
-      expect(res.body.error.code).toBe('FORBIDDEN');
+      expect(res.body.error.code).toBe('来源不允许');
     }
 
     for (const origin of ['http://127.0.0.1:53821', 'http://localhost:53821']) {
@@ -283,14 +342,14 @@ describe('API basics, validation and origin protection', () => {
 
     const badAppId = await request(app).post('/api/game/preview').set('Origin', ORIGIN).send({ appid: 0 });
     expect(badAppId.status).toBe(400);
-    expect(badAppId.body.error.code).toBe('INVALID_REQUEST');
+    expect(badAppId.body.error.code).toBe('参数无效');
 
     const badRange = await request(app)
       .post('/api/game/preview')
       .set('Origin', ORIGIN)
       .send({ appid: 570, filters: { dateRange: { start: 200, end: 100 } } });
     expect(badRange.status).toBe(400);
-    expect(badRange.body.error.code).toBe('INVALID_REQUEST');
+    expect(badRange.body.error.code).toBe('参数无效');
 
     // A single-sided range cannot be applied by Steam and must not be silently
     // ignored while the report still records it.
@@ -300,7 +359,7 @@ describe('API basics, validation and origin protection', () => {
         .set('Origin', ORIGIN)
         .send({ appid: 570, filters: { dateRange } });
       expect(partial.status).toBe(400);
-      expect(partial.body.error.code).toBe('INVALID_REQUEST');
+      expect(partial.body.error.code).toBe('参数无效');
       expect(String(partial.body.error.detail ?? '')).toContain('dateRange');
     }
 
@@ -310,14 +369,14 @@ describe('API basics, validation and origin protection', () => {
       .set('X-DeepSeek-Key', SECRET)
       .send({ appid: 570, filters: { dateRange: { start: 100 } } });
     expect(partialJob.status).toBe(400);
-    expect(partialJob.body.error.code).toBe('INVALID_REQUEST');
+    expect(partialJob.body.error.code).toBe('参数无效');
     const partialEndJob = await request(app)
       .post('/api/jobs')
       .set('Origin', ORIGIN)
       .set('X-DeepSeek-Key', SECRET)
       .send({ appid: 570, filters: { dateRange: { end: 200 } } });
     expect(partialEndJob.status).toBe(400);
-    expect(partialEndJob.body.error.code).toBe('INVALID_REQUEST');
+    expect(partialEndJob.body.error.code).toBe('参数无效');
 
     const empty = build({ steam: new FakeSteam({ empty: true }) });
     const res = await request(empty.app).post('/api/game/preview').set('Origin', ORIGIN).send({ appid: 570 });
@@ -345,7 +404,7 @@ describe('API basics, validation and origin protection', () => {
     for (const baseUrl of ['file:///etc/passwd', 'data:text/plain,hi', 'ftp://example.com']) {
       const bad = await request(app).post('/api/ai/test').set('Origin', ORIGIN).set('X-DeepSeek-Key', SECRET).send({ baseUrl });
       expect(bad.status).toBe(400);
-      expect(bad.body.error.code).toBe('INVALID_PARAMS');
+      expect(bad.body.error.code).toBe('参数无效');
     }
 
     const badJob = await request(app)
@@ -354,7 +413,7 @@ describe('API basics, validation and origin protection', () => {
       .set('X-DeepSeek-Key', SECRET)
       .send({ appid: 570, ai: { baseUrl: 'file:///etc/passwd' } });
     expect(badJob.status).toBe(400);
-    expect(badJob.body.error.code).toBe('INVALID_PARAMS');
+    expect(badJob.body.error.code).toBe('参数无效');
   });
 });
 
@@ -391,7 +450,7 @@ describe('full job lifecycle and local data APIs', () => {
     expect(list.status).toBe(200);
     expect(list.body.datasets).toHaveLength(1);
     const item = list.body.datasets[0];
-    expect(item).toMatchObject({ appid: 570, reviewCount: 3, status: 'complete', reportCount: 1 });
+    expect(item).toMatchObject({ appid: 570, reviewCount: 3, status: '完整', reportCount: 1 });
     const reviewsHash = item.reviewsHash;
     expect(reviewsHash).toMatch(/^[a-f0-9]{16}$/);
 
@@ -420,17 +479,17 @@ describe('full job lifecycle and local data APIs', () => {
       .get(`/api/reports/570/${analysisHash}`)
       .query({ dataDir: config.dataDir, topReviews: 0 });
     expect(badTopN.status).toBe(400);
-    expect(badTopN.body.error.code).toBe('INVALID_PARAMS');
+    expect(badTopN.body.error.code).toBe('参数无效');
 
     const badHash = await request(app).get('/api/reports/570/not-a-hash').query({ dataDir: config.dataDir });
     expect(badHash.status).toBe(400);
-    expect(badHash.body.error.code).toBe('INVALID_PARAMS');
+    expect(badHash.body.error.code).toBe('参数无效');
 
     const missingReport = await request(app)
       .get(`/api/reports/570/${'f'.repeat(16)}`)
       .query({ dataDir: config.dataDir });
     expect(missingReport.status).toBe(404);
-    expect(missingReport.body.error.code).toBe('NOT_FOUND');
+    expect(missingReport.body.error.code).toBe('报告不存在');
 
     steam.resolveCalls = 0;
     steam.aggregateCalls = 0;
@@ -462,7 +521,7 @@ describe('full job lifecycle and local data APIs', () => {
 
     const noConfirm = await request(app).post('/api/data/clear').set('Origin', ORIGIN).send({ dataDir: config.dataDir });
     expect(noConfirm.status).toBe(400);
-    expect(noConfirm.body.error.code).toBe('INVALID_REQUEST');
+    expect(noConfirm.body.error.code).toBe('参数无效');
 
     const del = await request(app)
       .delete(`/api/datasets/570/${reviewsHash}`)
@@ -684,7 +743,7 @@ describe('full job lifecycle and local data APIs', () => {
 
     const report = await request(app).get(`/api/jobs/${jobId}/report`);
     expect(report.status).toBe(409);
-    expect(report.body.error.code).toBe('CONFLICT');
+    expect(report.body.error.code).toBe('任务未完成');
     expect(steam.fetchCalls).toBeLessThanOrEqual(1);
   });
 

@@ -130,7 +130,7 @@ describe('runtime validation of persisted metadata, trends and reports', () => {
     expect(loaded?.reviews).toEqual([]);
     expect(await latestDataset(dataDir, 570)).toBeNull();
     const listed = await listDatasets(dataDir);
-    expect(listed[0]).toMatchObject({ status: 'corrupted', reviewsHash });
+    expect(listed[0]).toMatchObject({ status: '损坏', reviewsHash });
 
     // Aggregates without their computation time are equally unusable.
     fs.writeFileSync(
@@ -205,7 +205,8 @@ describe('runtime validation of persisted metadata, trends and reports', () => {
     fs.mkdirSync(path.dirname(reportFilePaths(dataDir, 570, HASH).json), { recursive: true });
     fs.writeFileSync(reportFilePaths(dataDir, 570, HASH).json, JSON.stringify(emptyReport), 'utf8');
     expect(await readReport(dataDir, 570, HASH)).toBeNull();
-    expect(await readServedReport(dataDir, 570, HASH, 10)).toBeNull();
+    // A corrupt report is a 500-class failure on the serving path, not 404.
+    await expect(readServedReport(dataDir, 570, HASH, 10)).rejects.toMatchObject({ code: 'INTERNAL' });
 
     // A structurally complete report whose caveat reuses a KPI value for the
     // wrong window must not be served either.

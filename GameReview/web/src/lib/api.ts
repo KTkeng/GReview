@@ -3,25 +3,41 @@ import type {
   ClientFilters,
   DatasetDetail,
   DatasetListResponse,
+  GamePresentation,
   GameResolveResult,
   HealthResult,
   JobSnapshot,
   PreviewResult,
   Report,
   ScrapeFilters,
+  TitleUpdateRequest,
+  TitleUpdateResponse,
 } from '../types';
 
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
   readonly detail?: unknown;
+  /** 校验失败时的请求字段名（可选）。 */
+  readonly field?: string;
+  /** 仅在 409 标题版本冲突时返回；调用方不得自动覆盖用户草稿。 */
+  readonly currentGame?: GamePresentation;
 
-  constructor(code: string, message: string, status = 0, detail?: unknown) {
+  constructor(
+    code: string,
+    message: string,
+    status = 0,
+    detail?: unknown,
+    field?: string,
+    currentGame?: GamePresentation,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
     this.detail = detail;
+    this.field = field;
+    this.currentGame = currentGame;
   }
 }
 
@@ -29,7 +45,7 @@ const NETWORK_MESSAGE =
   '无法连接后端服务，请确认 GReview 服务已启动（默认 http://127.0.0.1:53821）';
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   apiKey?: string;
   signal?: AbortSignal;
@@ -46,7 +62,38 @@ function buildUrl(path: string, query?: RequestOptions['query']): string {
   return search ? `${path}?${search}` : path;
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+function errorFromResponse(response: Response, payload: unknown): ApiError {
+  const errorPayload = (payload as { error?: unknown } | null)?.error;
+  if (errorPayload && typeof errorPayload === 'object') {
+    const record = errorPayload as {
+      code?: string;
+      message?: string;
+      field?: string;
+      detail?: unknown;
+      currentGame?: GamePresentation;
+    };
+    return new ApiError(
+      record.code ?? `HTTP_${response.status}`,
+      record.message ?? `请求失败（HTTP ${response.status}）`,
+      response.status,
+      record.detail,
+      record.field,
+      record.currentGame,
+    );
+  }
+  if (typeof errorPayload === 'string') {
+    return new ApiError(`HTTP_${response.status}`, errorPayload, response.status);
+  }
+  return new ApiError(
+    `HTTP_${response.status}`,
+    `请求失败（HTTP ${response.status}）`,
+    response.status,
+    (payload as { raw?: string } | null)?.raw,
+  );
+}
+
+/** 执行请求并统一把非 2xx 响应转换为 ApiError。 */
+async function sendRequest(path: string, options: RequestOptions = {}): Promise<Response> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.apiKey) headers['X-DeepSeek-Key'] = options.apiKey;
@@ -66,10 +113,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     throw new ApiError('NETWORK_ERROR', NETWORK_MESSAGE, 0);
   }
 
-  const contentType = response.headers.get('content-type') ?? '';
-  let payload: unknown = null;
-  if (response.status !== 204) {
+  if (!response.ok) {
+    let payload: unknown = null;
     try {
+      const contentType = response.headers.get('content-type') ?? '';
       if (contentType.includes('application/json')) {
         payload = await response.json();
       } else {
@@ -79,31 +126,36 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     } catch {
       payload = null;
     }
+    throw errorFromResponse(response, payload);
   }
 
-  if (!response.ok) {
-    const errorPayload = (payload as { error?: unknown } | null)?.error;
-    if (errorPayload && typeof errorPayload === 'object') {
-      const record = errorPayload as { code?: string; message?: string; detail?: unknown };
-      throw new ApiError(
-        record.code ?? `HTTP_${response.status}`,
-        record.message ?? `请求失败（HTTP ${response.status}）`,
-        response.status,
-        record.detail,
-      );
-    }
-    if (typeof errorPayload === 'string') {
-      throw new ApiError(`HTTP_${response.status}`, errorPayload, response.status);
-    }
-    throw new ApiError(
-      `HTTP_${response.status}`,
-      `请求失败（HTTP ${response.status}）`,
-      response.status,
-      (payload as { raw?: string } | null)?.raw,
-    );
-  }
+  return response;
+}
 
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const response = await sendRequest(path, options);
+
+  if (response.status === 204) return null as T;
+
+  const contentType = response.headers.get('content-type') ?? '';
+  let payload: unknown = null;
+  try {
+    if (contentType.includes('application/json')) {
+      payload = await response.json();
+    } else {
+      const text = await response.text();
+      payload = text ? { raw: text } : null;
+    }
+  } catch {
+    payload = null;
+  }
   return payload as T;
+}
+
+/** 读取纯文本响应（Markdown 导出）。 */
+async function requestText(path: string, options: RequestOptions = {}): Promise<string> {
+  const response = await sendRequest(path, options);
+  return response.text();
 }
 
 export function isApiError(error: unknown): error is ApiError {
@@ -251,6 +303,47 @@ export const api = {
       `/api/datasets/${encodeURIComponent(String(appid))}/${encodeURIComponent(reviewsHash)}`,
       {
         query: { dataDir: dataDir || undefined },
+        signal,
+      },
+    );
+  },
+
+  /**
+   * 保存自定义游戏标题。`expectedRevision` 用于乐观并发控制：
+   * 409 时 ApiError.currentGame 携带当前展示数据，调用方需保留草稿。
+   * 恢复自动名称传 `customTitle: null`。
+   */
+  updateDatasetTitle(
+    appid: number,
+    body: TitleUpdateRequest,
+    dataDir?: string,
+    signal?: AbortSignal,
+  ): Promise<TitleUpdateResponse> {
+    return request<TitleUpdateResponse>(
+      `/api/datasets/${encodeURIComponent(String(appid))}/title`,
+      {
+        method: 'PATCH',
+        body,
+        query: { dataDir: dataDir || undefined },
+        signal,
+      },
+    );
+  },
+
+  /**
+   * 读取由当前展示报告生成的 Markdown 文本。
+   * 服务端不会直接返回旧 Markdown 快照；文件名由 AppID 与 analysisHash 生成。
+   */
+  getReportMarkdown(
+    appid: number,
+    analysisHash: string,
+    dataDir?: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    return requestText(
+      `/api/reports/${encodeURIComponent(String(appid))}/${encodeURIComponent(analysisHash)}`,
+      {
+        query: { dataDir: dataDir || undefined, format: 'markdown' },
         signal,
       },
     );

@@ -1,30 +1,41 @@
 import { useState } from 'react';
-import type { Report } from '../types';
-import { downloadMarkdown } from '../lib/exportMarkdown';
+import type { Report, ReportSource } from '../types';
+import { downloadReportMarkdown } from '../lib/exportMarkdown';
 import { IconDownload, IconPrinter } from './Icon';
 
 interface ExportButtonsProps {
   report: Report;
+  /** 历史报告有 analysisHash 时优先让后端按当前展示标题生成 Markdown。 */
+  reportSource?: ReportSource;
 }
 
-export function ExportButtons({ report }: ExportButtonsProps) {
+export function ExportButtons({ report, reportSource }: ExportButtonsProps) {
   const [exported, setExported] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    setExporting(true);
     try {
-      const filename = downloadMarkdown(report);
+      const filename = await downloadReportMarkdown(report, reportSource);
       setExported(filename);
       window.setTimeout(() => setExported(null), 4000);
     } catch {
       setExported('导出失败');
+    } finally {
+      setExporting(false);
     }
   };
 
   return (
     <div className="inline-flex" style={{ flexWrap: 'wrap', gap: 6 }}>
-      <button type="button" className="btn btn-sm" onClick={handleExport}>
+      <button
+        type="button"
+        className="btn btn-sm"
+        onClick={() => void handleExport()}
+        disabled={exporting}
+      >
         <IconDownload size={14} />
-        导出 Markdown
+        {exporting ? '导出中…' : '导出 Markdown'}
       </button>
       <button type="button" className="btn btn-sm" onClick={() => window.print()}>
         <IconPrinter size={14} />

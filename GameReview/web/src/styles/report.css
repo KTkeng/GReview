@@ -905,6 +905,197 @@
   margin-top: var(--space-sm);
 }
 
+/* ---------- 游戏标题与封面 ---------- */
+
+.cover-image {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.cover-thumb {
+  flex: 0 0 auto;
+}
+
+.cover-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  padding: 1px;
+  background: var(--border);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.15;
+  text-align: center;
+  word-break: break-word;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-cover {
+  width: 120px;
+  height: 56px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.dataset-card-body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dataset-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.dataset-title-line .dataset-game {
+  flex: 0 1 auto;
+}
+
+.dataset-title-edit {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  line-height: 0;
+  color: var(--text-secondary);
+}
+
+.dataset-title-edit:disabled {
+  color: var(--text-disabled);
+}
+
+/* 「自定义」徽标：12px / #38BDF8 / #1F2937 背景 / 4px 圆角。 */
+.custom-title-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.custom-title-print {
+  display: none;
+}
+
+.dataset-title-hint,
+.reuse-original-name {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.dataset-title-warning {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--warning-light);
+}
+
+.dataset-title-saved {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--positive-light);
+}
+
+.dataset-title-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.dataset-title-input {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.dataset-title-input[aria-invalid='true'] {
+  border-color: var(--negative);
+}
+
+.dataset-title-editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dataset-title-count {
+  margin-right: auto;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dataset-title-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dataset-title-editor-actions .btn {
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.dataset-title-error {
+  margin: 0;
+}
+
+.reuse-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  color: var(--text-secondary);
+}
+
+.reuse-game-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.report-toolbar-title {
+  flex-wrap: wrap;
+}
+
+.report-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  font-size: var(--fs-display);
+  line-height: var(--lh-display);
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
 /* ---------- 模态框 ---------- */
 
 .modal-backdrop {

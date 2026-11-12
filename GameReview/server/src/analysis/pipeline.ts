@@ -42,6 +42,17 @@ export interface AnalyzeResult {
   usedForAI: number;
 }
 
+/**
+ * Per-stage output budget. DeepSeek thinking shares `max_tokens` between
+ * `reasoning_content` and the visible JSON. The API's own default is 8K
+ * without thinking and 64K with thinking, so setting 8K while thinking (the
+ * old behavior) silently capped reasoning far below DeepSeek's default. Use
+ * the provider's thinking default explicitly; the client escalates further if
+ * a response still ends with finish_reason "length".
+ */
+export const ANALYSIS_MAX_TOKENS = 8192;
+export const ANALYSIS_THINKING_MAX_TOKENS = 65536;
+
 export function buildKpiPromptInput(
   reviews: Review[],
   allTimeSummary: SteamSummary | null,
@@ -159,6 +170,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
 
   let usage: TokenUsage = { input: 0, output: 0 };
   let combined: ParsedAnalysis;
+  const stageMaxTokens = input.aiOptions.thinking ? ANALYSIS_THINKING_MAX_TOKENS : ANALYSIS_MAX_TOKENS;
 
   if (chunks.length === 1) {
     ensureActive();
@@ -168,7 +180,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
       model: input.aiOptions.model,
       system: prompt.system,
       user: prompt.user,
-      maxTokens: 8192,
+      maxTokens: stageMaxTokens,
       temperature: input.aiOptions.temperature,
       thinking: input.aiOptions.thinking,
       signal: input.signal,
@@ -189,7 +201,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
         model: input.aiOptions.model,
         system: prompt.system,
         user: prompt.user,
-        maxTokens: 8192,
+        maxTokens: stageMaxTokens,
         temperature: input.aiOptions.temperature,
         thinking: input.aiOptions.thinking,
         signal: input.signal,
@@ -206,7 +218,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
       model: input.aiOptions.model,
       system: mergePrompt.system,
       user: mergePrompt.user,
-      maxTokens: 8192,
+      maxTokens: stageMaxTokens,
       temperature: input.aiOptions.temperature,
       thinking: input.aiOptions.thinking,
       signal: input.signal,
@@ -226,7 +238,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
       model: input.aiOptions.model,
       system: finalPrompt.system,
       user: finalPrompt.user,
-      maxTokens: 8192,
+      maxTokens: stageMaxTokens,
       temperature: input.aiOptions.temperature,
       thinking: input.aiOptions.thinking,
       signal: input.signal,

@@ -204,7 +204,7 @@ function jobRequest(dataDir: string, overrides: Partial<CreateJobRequest> = {}):
 async function waitForJob(manager: JobManager, jobId: string, timeoutMs = 10000): Promise<JobSnapshot> {
   const started = Date.now();
   for (;;) {
-    const snapshot = manager.getSnapshot(jobId);
+    const snapshot = await manager.getSnapshot(jobId);
     if (snapshot.status === 'completed' || snapshot.status === 'failed' || snapshot.status === 'cancelled') {
       return snapshot;
     }
@@ -244,7 +244,7 @@ describe('real Steam parameter mapping for all-time and rolling KPIs', () => {
     const captured: Captured = { official: [], storefront: [] };
     const { manager, ai } = buildManager(dataDir, makeFetch(captured));
     const request = jobRequest(dataDir);
-    const { jobId } = manager.createJob(request, 'sk-test-aggregate', dataDir);
+    const { jobId } = await manager.createJob(request, 'sk-test-aggregate', dataDir);
 
     const snapshot = await waitForJob(manager, jobId);
     expect(snapshot.status).toBe('completed');
@@ -301,7 +301,7 @@ describe('real Steam parameter mapping for all-time and rolling KPIs', () => {
     const captured: Captured = { official: [], storefront: [] };
     const { manager } = buildManager(dataDir, makeFetch(captured, { officialAggregatesDown: true }));
     const request = jobRequest(dataDir);
-    const { jobId } = manager.createJob(request, 'sk-test-aggregate', dataDir);
+    const { jobId } = await manager.createJob(request, 'sk-test-aggregate', dataDir);
 
     const snapshot = await waitForJob(manager, jobId);
     expect(snapshot.status).toBe('completed');

@@ -4,6 +4,7 @@ import type {
   AnalysisConfig,
   DatasetSummary,
   GameMeta,
+  GamePresentation,
   JobLogEntry,
   JobSnapshot,
   JobState,
@@ -22,8 +23,9 @@ import {
   validateDataDir,
 } from './lib/validation';
 import { buildPreviewRequest, getMatchingTotal, getReuseInfo, previewConfigSlice } from './lib/preview';
-import { downloadMarkdown } from './lib/exportMarkdown';
-import { formatNumber, gameName } from './lib/format';
+import { downloadReportMarkdown } from './lib/exportMarkdown';
+import { formatNumber } from './lib/format';
+import { gameTitleInfo } from './lib/gameTitle';
 import { AppLayout } from './components/AppLayout';
 import { Header } from './components/Header';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -144,6 +146,9 @@ export default function App() {
   const lastGameUrlRef = useRef(config.gameUrl);
   const lastPreviewKeyRef = useRef('');
   const startedAppidRef = useRef<number | null>(null);
+  /** 预览与报告的来源数据目录：标题更新只能影响同一目录中的展示缓存。 */
+  const previewDataDirRef = useRef('');
+  const reportDataDirRef = useRef('');
   const toastTimerRef = useRef<number | null>(null);
 
   const validation = useMemo(() => validateConfig(config, appid), [config, appid]);
@@ -339,6 +344,7 @@ export default function App() {
         }),
       );
       const resultMatching = getMatchingTotal(result);
+      previewDataDirRef.current = config.dataDir.trim();
       setPreview({
         status: resultMatching > 0 ? 'success' : 'no_match',
         result,
@@ -444,6 +450,7 @@ export default function App() {
 
       try {
         const created = await api.createJob(config.apiKey, body);
+        reportDataDirRef.current = config.dataDir.trim();
         setReport(null);
         setReportSource(null);
         setJobId(created.jobId);
@@ -717,6 +724,7 @@ export default function App() {
   const handleOpenReport = useCallback((savedReport: Report, source: ReportSource) => {
     setReport(savedReport);
     setReportSource(source);
+    reportDataDirRef.current = (source.dataDir ?? '').trim();
     setPhase('completed');
     const savedAppid = Number((savedReport.game as { appid?: number } | undefined)?.appid);
     if (Number.isFinite(savedAppid) && savedAppid > 0) {
@@ -745,6 +753,53 @@ export default function App() {
     }
   }, [showToast]);
 
+  /**
+   * 标题保存成功（或 409 冲突刷新）后，按 AppID 同步：
+   * 顶部当前游戏、预览中的 GamePresentation、已打开报告的头部。
+   * titleRevision 只由后端递增；这里不再接受更旧的响应覆盖较新标题。
+   */
+  const handleTitleUpdated = useCallback((updated: GamePresentation) => {
+    const updatedRevision = gameTitleInfo(updated, updated.appid).titleRevision;
+    const canApply = (current: Partial<GameMeta> | null | undefined) =>
+      !current ||
+      updatedRevision >=
+        gameTitleInfo(current as GameMeta, Number(current.appid)).titleRevision;
+    // 预览结果与已打开报告各自绑定创建时的数据目录；标题按目录隔离，
+    // 当前目录中的改名不得改写另一个目录的展示缓存。
+    const normalizeDir = (value: string | undefined) =>
+      (value ?? '').trim().replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+    const sameDataDir = (value: string | undefined) =>
+      normalizeDir(value) === normalizeDir(config.dataDir);
+
+    setGame((previous) => {
+      if (!previous) return previous;
+      const previousAppid = Number(previous.appid);
+      if (Number.isFinite(previousAppid) && previousAppid !== updated.appid) return previous;
+      if (!canApply(previous)) return previous;
+      return { ...previous, ...updated };
+    });
+    setPreview((previous) => {
+      if (!previous.result || !sameDataDir(previewDataDirRef.current)) return previous;
+      const previewAppid = Number(previous.result.appid ?? previous.result.game?.appid);
+      if (previewAppid !== updated.appid) return previous;
+      const currentGame =
+        previous.result.game && typeof previous.result.game === 'object'
+          ? previous.result.game
+          : {};
+      if (!canApply(currentGame)) return previous;
+      return {
+        ...previous,
+        result: { ...previous.result, game: { ...currentGame, ...updated } },
+      };
+    });
+    setReport((previous) => {
+      if (!previous || !sameDataDir(reportDataDirRef.current)) return previous;
+      if (Number(previous.game?.appid) !== updated.appid) return previous;
+      if (!canApply(previous.game)) return previous;
+      return { ...previous, game: { ...previous.game, ...updated } };
+    });
+  }, [config.dataDir]);
+
   const handleUseDataset = useCallback((dataset: DatasetSummary) => {
     const url = `https://store.steampowered.com/app/${dataset.appid}`;
     lastGameUrlRef.current = url;
@@ -756,7 +811,7 @@ export default function App() {
         : { ...dataset.game, appid: dataset.appid },
     );
     setGameError(null);
-    showToast(`已填入 ${gameName(dataset.game)}，可预览或开始分析`);
+    showToast(`已填入 ${gameTitleInfo(dataset.game, dataset.appid).displayTitle}，可预览或开始分析`);
   }, [showToast]);
 
   const handleApplyDataDir = useCallback(async () => {
@@ -789,15 +844,15 @@ export default function App() {
     }
   }, [config.dataDir]);
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     if (!report) return;
     try {
-      const filename = downloadMarkdown(report);
+      const filename = await downloadReportMarkdown(report, reportSource ?? undefined);
       showToast(`已导出 ${filename}`);
     } catch {
       showToast('导出失败，请重试');
     }
-  }, [report, showToast]);
+  }, [report, reportSource, showToast]);
 
   const handlePrint = useCallback(() => {
     window.print();
@@ -822,6 +877,7 @@ export default function App() {
       onUseDataset={handleUseDataset}
       onOpenReport={handleOpenReport}
       onChanged={() => setDatasetsRefreshKey((value) => value + 1)}
+      onTitleUpdated={handleTitleUpdated}
     />
   );
 

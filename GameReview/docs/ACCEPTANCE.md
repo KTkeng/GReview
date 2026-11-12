@@ -1,8 +1,8 @@
 # GReview v0.1.3 验收与已知问题
 
-- 日期：2026-11-06
+- 日期：2026-11-06（2026-11-12 更新思考模式修复）
 - 版本：v0.1.3
-- 构建/测试：`npm test` 通过；后端 **222 passed / 1 skipped**，前端 **72 passed**；`npm run build`、`npm run lint` 均 exit 0。
+- 构建/测试：`npm test` 通过；后端 **235 passed / 1 skipped**，前端 **72 passed**；`npm run build`、`npm run lint` 均 exit 0。
 - 真实 Steam + DeepSeek 端到端冒烟：需要使用者在本机填入自己的 Key 后验证。
 
 ## v0.1.2 修复
@@ -16,6 +16,16 @@
 - **Windows 一键启动器**：`start-greview.bat` 会检查 Node.js 20+/npm、首次运行安装依赖、构建产物缺失时构建、启动服务并打开浏览器；已在运行时不会重复启动。
 - **Release 安装包**：`GReview-v0.1.3-windows.zip` 包含已构建的前端/后端、启动器和文档，解压后双击即可使用；用户不需要手动执行 npm 命令。
 - macOS/Linux 用户仍按 README 使用 `npm install` / `npm run dev`。
+
+## 2026-11-12 修复：思考模式分析失败
+
+- **根因**：DeepSeek 思考模式的 `reasoning_content` 与正文共享 `max_tokens`。此前各分析阶段固定 8192，开启思考后推理会把预算耗尽，接口以 HTTP 200 返回空 `content` 和 `finish_reason: "length"`；随后的 JSON 修复重试同样被思考耗尽，最终表现为 `AI_INVALID_RESPONSE`。
+- 思考模式下每阶段初始 `max_tokens` 对齐 DeepSeek 的 64K 思考默认值（65536）；`DeepSeekProvider` 检测到 `finish_reason: "length"` 后自动将预算翻倍（上限 131072），保留思考开关，不静默降级。
+- 思考请求超时下限提升到 600s（10 分钟，可随时取消）；正文读取阶段的超时正确映射为 `AI_TIMEOUT`，调用方取消仍优先返回 `CANCELLED`。
+- DeepSeek 文档中的 `insufficient_system_resource`/`aborted` 中断会自动退避重试 2 次；`content_filter` 直接返回明确错误，不再走无意义的 JSON 修复。
+- 输出仍被截断时返回明确错误（含 `finish_reason`、`max_tokens` 与思考内容长度），不再只显示“AI 返回内容无法解析”。
+- 自定义 Base URL 若拒绝 64K `max_tokens`（例如只支持 8K 的兼容端点），自动回退到 8192 并保持思考开启，不会再次升到被拒绝的区间。
+- 新增 13 项回归测试覆盖预算提升、64K→128K 升档、修复预算复用、截断错误、思考超时、正文读取超时、取消优先级、非思考预算、自定义端点回退与中断重试。
 
 ## 验收状态
 
@@ -31,16 +41,13 @@
 2. **AI 数字一致性校验仍有边界漏洞**（`server/src/analysis/conclusion.ts`，major）
    “较上月”未唯一绑定最新月份对；少数无量词计数可能被正则回溯误匹配。可能影响报告数字校验的严格性。
 
-3. **AI 正文读取超时映射**（`server/src/ai/deepseek.ts`，major）
-   响应头已返回但正文停滞时，超时可能被映射为 `AI_INVALID_RESPONSE` 而不是 `AI_TIMEOUT`；错误提示会不够精确。
-
-4. **最终主题限制可被绕过**（`server/src/analysis/pipeline.ts`，major）
+3. **最终主题限制可被绕过**（`server/src/analysis/pipeline.ts`，major）
    final 阶段沿用已有主题 ID/名称但替换内容时，可能绕过“不得引入新主题”的限制；预期落差/更新影响也需更严格的合并约束。
 
-5. **报告 JSON/Markdown 提交非事务**（`server/src/storage/report.ts`，major）
+4. **报告 JSON/Markdown 提交非事务**（`server/src/storage/report.ts`，major）
    两个文件分别原子写；极端写入失败或同键并发时，可能留下 JSON 与 Markdown 不一致的报告。
 
-6. **预览错误码不一致**（`server/src/routes/game.ts`，minor）
+5. **预览错误码不一致**（`server/src/routes/game.ts`，minor）
    appid=0/负数/超范围时返回 `INVALID_REQUEST`，契约写的是 `INVALID_URL`；不影响功能，影响错误码一致性。
 
 ## 其他已知限制

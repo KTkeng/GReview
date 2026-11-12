@@ -70,8 +70,26 @@
   .report-toolbar-title,
   .report-toolbar-title strong,
   .report-toolbar .dim,
-  .reuse-indicator .reuse-note {
+  .reuse-indicator .reuse-note,
+  .report-title {
     color: #111827 !important;
+  }
+
+  /* 打印页用文字标注自定义标题来源，徽标样式只用于屏幕。 */
+  .custom-title-badge {
+    display: none !important;
+  }
+
+  .custom-title-print {
+    display: inline !important;
+    color: #374151 !important;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .report-cover,
+  .cover-placeholder {
+    border-color: #d1d5db !important;
   }
 
   .conclusion-card {

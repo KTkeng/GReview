@@ -3,9 +3,10 @@ import type { ServerConfig } from '../lib/config';
 import { AppError } from '../lib/errors';
 import type { SteamService } from '../steam/service';
 import { parseSteamUrl } from '../steam/url';
-import { ensureDataDir } from '../storage/paths';
+import { resolveDataDir } from '../storage/paths';
 import { buildReviewsHash, readDataset } from '../storage/dataset';
 import { readTrend } from '../storage/dataset';
+import { resolveGamePresentation } from '../storage/presentation';
 import { buildAnalysisHash, listReportFiles, readReport } from '../storage/report';
 import { estimateCostUsd } from '../ai/pricing';
 import { PROMPT_VERSION } from '../ai/prompts';
@@ -13,7 +14,7 @@ import { baseUrlHost } from '../ai/deepseek';
 import { estimateChunkCount, PREVIEW_AVERAGE_TOKENS_PER_REVIEW } from '../analysis/chunk';
 import { withClientFilterDefaults, withFilterDefaults } from '../steam/filters';
 import { anchorMonthOf, buildTrendHash } from '../steam/trend';
-import type { DatasetHint, PreviewResult, ReportHint, SteamSummary } from '../types';
+import type { DatasetHint, GameMeta, PreviewResult, ReportHint, SteamSummary } from '../types';
 import { asyncHandler, validateDateRange, zodToAppError } from './helpers';
 import { previewSchema, resolveSchema } from './schemas';
 
@@ -114,7 +115,7 @@ export function gameRoutes(deps: GameRouteDeps): Router {
       const filters = withFilterDefaults(body.filters);
       const clientFilters = withClientFilterDefaults(body.clientFilters);
       validateDateRange(filters.dateRange?.start, filters.dateRange?.end);
-      const dataDir = await ensureDataDir(body.dataDir, dataDirOptions);
+      const dataDir = resolveDataDir(body.dataDir, dataDirOptions);
       const months = body.trend.months;
 
       const reviewsHash = buildReviewsHash({
@@ -127,8 +128,21 @@ export function gameRoutes(deps: GameRouteDeps): Router {
       const reusable = local && local.status === 'complete' ? local : null;
 
       // Reusing a local dataset must not touch Steam at all; game metadata is
-      // read from the stored dataset instead of appdetails.
-      const game = reusable ? reusable.meta.game : await deps.steam.resolveGame(appid);
+      // read from the stored dataset instead of appdetails. When Steam metadata
+      // is unavailable (name/cover only), the preview still works and can show
+      // a local custom title resolved from the same directory.
+      let gameMeta: GameMeta | null | undefined;
+      if (reusable) {
+        gameMeta = reusable.meta.game;
+      } else {
+        try {
+          gameMeta = await deps.steam.resolveGame(appid);
+        } catch (err) {
+          if (err instanceof AppError && (err.code === 'CANCELLED' || err.code === 'STEAM_RATE_LIMITED')) throw err;
+          gameMeta = undefined;
+        }
+      }
+      const game = await resolveGamePresentation(dataDir, appid, gameMeta);
 
       let summary: SteamSummary | null = reusable?.meta.summary ?? null;
       let source: 'official' | 'storefront' = summary?.sourceEndpoint ?? 'official';
@@ -200,7 +214,7 @@ export function gameRoutes(deps: GameRouteDeps): Router {
       }
 
       const hint = reusable
-        ? datasetHint(reusable.meta.fetchedAt, reusable.reviews.length, reviewsHash, reusable.meta.game?.name)
+        ? datasetHint(reusable.meta.fetchedAt, reusable.reviews.length, reviewsHash, game.displayTitle)
         : null;
       const reportHint = await reportHintFor(dataDir, appid, {
         ...(exactAnalysisHash ? { analysisHash: exactAnalysisHash } : {}),

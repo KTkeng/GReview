@@ -85,10 +85,10 @@ function request(
 }
 
 async function runJob(harness: Harness, req: CreateJobRequest): Promise<JobSnapshot> {
-  const { jobId } = harness.manager.createJob(req, 'sk-test-reuse', harness.dataDir);
+  const { jobId } = await harness.manager.createJob(req, 'sk-test-reuse', harness.dataDir);
   const started = Date.now();
   for (;;) {
-    const snapshot = harness.manager.getSnapshot(jobId);
+    const snapshot = await harness.manager.getSnapshot(jobId);
     if (snapshot.status === 'completed' || snapshot.status === 'failed' || snapshot.status === 'cancelled') {
       return snapshot;
     }

@@ -407,7 +407,23 @@ describe('dataset storage', () => {
 
     const listed = await listDatasets(dataDir);
     expect(listed).toHaveLength(1);
-    expect(listed[0]).toMatchObject({ appid: 570, reviewsHash, reviewCount: 3, status: 'complete', game: 'Test Game' });
+    expect(listed[0]).toMatchObject({
+      appid: 570,
+      reviewsHash,
+      reviewCount: 3,
+      status: '完整',
+      game: expect.objectContaining({
+        appid: 570,
+        name: 'Test Game',
+        steamName: 'Test Game',
+        customTitle: null,
+        displayTitle: 'Test Game',
+        titleSource: '自动读取',
+        titleRevision: 0,
+        titleEditable: true,
+        coverPlaceholder: 'AppID 570',
+      }),
+    });
   });
 
   it('flags corrupted or tampered datasets and never treats them as complete', async () => {
@@ -427,7 +443,7 @@ describe('dataset storage', () => {
     expect(tampered?.reviews).toHaveLength(4);
     expect(await latestDataset(dataDir, 570)).toBeNull();
     const listed = await listDatasets(dataDir);
-    expect(listed[0].status).toBe('corrupted');
+    expect(listed[0].status).toBe('损坏');
   });
 
   it('accepts mixed sentiment in a persisted report', async () => {
@@ -490,7 +506,7 @@ describe('dataset storage', () => {
     expect(detail?.reviewCount).toBe(3);
     expect(detail?.trends[0]).toMatchObject({ trendHash: HASH_A, points: 1 });
     expect(detail?.reports.map((r) => r.analysisHash)).toEqual([HASH_B]);
-    expect(detail?.status).toBe('complete');
+    expect(detail?.status).toBe('完整');
   });
 });
 

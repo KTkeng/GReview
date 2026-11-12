@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { DatasetSummary, Report, ReportSource } from '../types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { DatasetSummary, GamePresentation, Report, ReportSource } from '../types';
 import { api, toApiError } from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import { formatNumber } from '../lib/format';
+import { gameTitleInfo, toGamePresentation } from '../lib/gameTitle';
 import { DatasetCard } from './DatasetCard';
 import { ConfirmDialog, ErrorBanner, InlineNotice } from './ui';
+
+/** 目录比较键：统一分隔符并去掉末尾斜杠；大小写保持原样以兼容大小写敏感系统。 */
+function normalizeDataDirForCompare(value: string): string {
+  return value.trim().replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+}
 
 interface LocalDataPanelProps {
   dataDir: string;
@@ -12,6 +18,8 @@ interface LocalDataPanelProps {
   onUseDataset: (dataset: DatasetSummary) => void;
   onOpenReport: (report: Report, source: ReportSource) => void;
   onChanged?: () => void;
+  /** 标题保存成功或冲突刷新后通知 App，按 dataDir+appid 更新复用提示与报告头部。 */
+  onTitleUpdated?: (game: GamePresentation) => void;
 }
 
 export function LocalDataPanel({
@@ -20,6 +28,7 @@ export function LocalDataPanel({
   onUseDataset,
   onOpenReport,
   onChanged,
+  onTitleUpdated,
 }: LocalDataPanelProps) {
   const [resolvedDir, setResolvedDir] = useState<string>('');
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
@@ -35,14 +44,55 @@ export function LocalDataPanel({
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheError, setCacheError] = useState<string | null>(null);
 
+  /**
+   * 已确认的最新标题（按 dataDir + AppID）。标题按数据目录隔离，异步列表响应
+   * 或保存响应晚到时，只要 titleRevision 更旧就不得覆盖较新的标题。
+   */
+  const latestGamesRef = useRef(new Map<string, GamePresentation>());
+  const dataDirRef = useRef(dataDir);
+
+  useEffect(() => {
+    dataDirRef.current = dataDir;
+  }, [dataDir]);
+
+  const gameCacheKey = useCallback(
+    (appid: number) => `${normalizeDataDirForCompare(dataDir || '')}|${appid}`,
+    [dataDir],
+  );
+
+  const rememberGame = useCallback((game: GamePresentation) => {
+    if (!game || !Number.isFinite(game.appid) || game.appid <= 0) return;
+    const key = gameCacheKey(game.appid);
+    const existing = latestGamesRef.current.get(key);
+    if (
+      !existing ||
+      gameTitleInfo(game, game.appid).titleRevision >=
+        gameTitleInfo(existing, game.appid).titleRevision
+    ) {
+      latestGamesRef.current.set(key, game);
+    }
+  }, [gameCacheKey]);
+
+  const mergeLatestGame = useCallback((dataset: DatasetSummary): DatasetSummary => {
+    const latest = latestGamesRef.current.get(gameCacheKey(dataset.appid));
+    if (!latest) return dataset;
+    const incomingRevision = gameTitleInfo(dataset.game, dataset.appid).titleRevision;
+    const latestRevision = gameTitleInfo(latest, dataset.appid).titleRevision;
+    return latestRevision > incomingRevision ? { ...dataset, game: latest } : dataset;
+  }, [gameCacheKey]);
+
   const load = useCallback(
     async (signal?: AbortSignal) => {
       setLoading(true);
       setError(null);
       try {
         const result = await api.listDatasets(dataDir || undefined, signal);
+        const datasets = Array.isArray(result.datasets) ? result.datasets : [];
+        for (const dataset of datasets) {
+          rememberGame(toGamePresentation(dataset.game, dataset.appid));
+        }
         setResolvedDir(result.dataDir ?? '');
-        setDatasets(Array.isArray(result.datasets) ? result.datasets : []);
+        setDatasets(datasets.map(mergeLatestGame));
         setLoadedOnce(true);
       } catch (caught) {
         if ((caught as { name?: string }).name === 'AbortError') return;
@@ -52,7 +102,37 @@ export function LocalDataPanel({
         setLoading(false);
       }
     },
-    [dataDir],
+    [dataDir, mergeLatestGame, rememberGame],
+  );
+
+  const handleTitleSaved = useCallback(
+    (game: GamePresentation) => {
+      // 保存请求可能跨越数据目录切换：旧目录的迟到响应不得写入当前目录的列表。
+      if (
+        normalizeDataDirForCompare(dataDir || '') !==
+        normalizeDataDirForCompare(dataDirRef.current || '')
+      ) {
+        return;
+      }
+      const key = gameCacheKey(game.appid);
+      const existing = latestGamesRef.current.get(key);
+      if (
+        existing &&
+        gameTitleInfo(existing, game.appid).titleRevision >
+          gameTitleInfo(game, game.appid).titleRevision
+      ) {
+        // 迟到的旧响应：保留已展示的新标题。
+        return;
+      }
+      rememberGame(game);
+      setDatasets((previous) =>
+        previous.map((dataset) =>
+          dataset.appid === game.appid ? { ...dataset, game } : dataset,
+        ),
+      );
+      onTitleUpdated?.(game);
+    },
+    [dataDir, gameCacheKey, onTitleUpdated, rememberGame],
   );
 
   useEffect(() => {
@@ -204,12 +284,13 @@ export function LocalDataPanel({
         <div className="dataset-list">
           {datasets.map((dataset) => (
             <DatasetCard
-              key={`${dataset.appid}-${dataset.reviewsHash}`}
+              key={`${dataDir}|${dataset.appid}-${dataset.reviewsHash}`}
               dataset={dataset}
               dataDir={dataDir}
               onUse={onUseDataset}
               onDeleted={handleDelete}
               onReportLoaded={onOpenReport}
+              onTitleSaved={handleTitleSaved}
             />
           ))}
         </div>

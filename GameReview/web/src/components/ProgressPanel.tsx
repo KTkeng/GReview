@@ -64,7 +64,7 @@ function errorHint(code: string | undefined): string | null {
     AI_RATE_LIMITED: 'DeepSeek 请求限流，请等待约 1 分钟后重试。',
     AI_TIMEOUT: 'AI 请求超时。可缩小抓取上限、关闭深度思考或更换模型后重试。',
     AI_INVALID_RESPONSE:
-      'AI 返回数据无法解析或证据未通过校验，建议缩小样本或换模型重试。原有数据与报告不会受本次失败影响。',
+      'AI 返回数据无法解析、输出被截断或证据未通过校验，建议缩小样本、关闭深度思考或换模型重试。原有数据与报告不会受本次失败影响。',
     AI_CONTEXT_TOO_LARGE:
       '样本超出模型上下文。请降低抓取数量上限、减少语言或缩短趋势范围后重试。',
     STEAM_RATE_LIMITED:

@@ -51,7 +51,7 @@ export function ReportView({
 
   return (
     <div className="report-view">
-      <ReportHeader report={report} onReanalyze={onReanalyze} />
+      <ReportHeader report={report} onReanalyze={onReanalyze} reportSource={reportSource} />
 
       <ConclusionCard conclusion={report.conclusion} />
 

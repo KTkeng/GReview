@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const appidSchema = z.coerce.number().int().positive().max(2147483647);
+export const appidSchema = z.coerce.number().int().positive().max(4294967295);
 
 const languagesSchema = z.array(z.string().min(1).max(32)).min(1).max(30);
 
@@ -98,3 +98,16 @@ export const dataClearSchema = z.object({
 export const cacheClearSchema = z.object({
   appid: appidSchema.optional(),
 });
+
+/**
+ * Strict TitleUpdateRequest: both fields are required, unknown fields are
+ * rejected, and expectedRevision must be a non-negative safe integer. The
+ * title's textual rules (NFC/trim/1–120 code points/control characters) are
+ * enforced by storage/game-title so the same code validates request and disk.
+ */
+export const titleUpdateSchema = z
+  .object({
+    customTitle: z.union([z.string(), z.null()]),
+    expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict();

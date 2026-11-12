@@ -9,9 +9,39 @@ import { AppError } from './errors';
 export interface OriginRequest {
   method: string;
   origin?: string;
+  host?: string;
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+const ALLOWED_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1']);
+
+/**
+ * Strip an optional `:port` from a Host header without accepting userinfo,
+ * paths, commas or anything else spoofable. IPv6 literals must be bracketed.
+ */
+function hostnameOf(host: string): string | null {
+  const value = host.trim();
+  if (!value) return null;
+  if (value.startsWith('[')) {
+    const match = /^\[([0-9a-f:.]+)\](?::(\d{1,5}))?$/i.exec(value);
+    return match ? match[1].toLowerCase() : null;
+  }
+  const match = /^([^:/\s\\@,]+)(?::(\d{1,5}))?$/.exec(value);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Host header check against DNS rebinding: an arbitrary domain that resolves to
+ * 127.0.0.1 must not be able to address this local service. The port is not
+ * part of the check because dev proxies and test servers use ephemeral ports,
+ * but the hostname itself must be an explicit loopback name.
+ */
+export function isAllowedHost(host: string | undefined): boolean {
+  if (!host) return false;
+  const hostname = hostnameOf(host);
+  return hostname !== null && ALLOWED_HOSTNAMES.has(hostname);
+}
 
 /**
  * Check an explicit Origin value. Only the two exact local origins for the
@@ -49,6 +79,11 @@ export function allowRead(req: OriginRequest, _port?: number): boolean {
 
 export function originMiddleware(port: number) {
   return (req: { method: string; headers: Record<string, unknown> }, _res: unknown, next: (err?: unknown) => void) => {
+    const host = typeof req.headers.host === 'string' ? req.headers.host : undefined;
+    if (!isAllowedHost(host)) {
+      next(new AppError('FORBIDDEN', `Host ${host ?? '(缺少)'} 不在本机允许列表`));
+      return;
+    }
     const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
     if (WRITE_METHODS.has(req.method.toUpperCase()) && !allowWrite({ method: req.method, origin }, port)) {
       next(new AppError('FORBIDDEN', `Origin ${origin} 不在本机允许列表`));

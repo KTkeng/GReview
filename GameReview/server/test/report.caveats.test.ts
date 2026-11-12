@@ -139,8 +139,13 @@ describe('AI caveats are public report content and are validated before storage'
     raw.conclusion.caveats = [...raw.conclusion.caveats, '样本涵盖 99.9% 的玩家。'];
     fs.writeFileSync(file, JSON.stringify(raw), 'utf8');
 
+    // Reuse flows degrade corrupt reports to "not reusable"…
     expect(await readReport(dataDir, 570, 'a'.repeat(16))).toBeNull();
-    expect(await readServedReport(dataDir, 570, 'a'.repeat(16), 2)).toBeNull();
+    // …but the serving entry must report corruption as an explicit 500-class
+    // failure instead of pretending the report does not exist.
+    await expect(readServedReport(dataDir, 570, 'a'.repeat(16), 2)).rejects.toMatchObject({
+      code: 'INTERNAL',
+    });
   });
 });
 

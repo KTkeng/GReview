@@ -77,6 +77,47 @@ export interface GameMeta {
   price?: string;
 }
 
+/** Source of the displayed title (contract GamePresentation.titleSource). */
+export type TitleSource = '自定义' | '自动读取' | '编号占位';
+
+/**
+ * Unified presentation model resolved on every read path (dataset list/detail,
+ * preview, reports, job completion). `name` always equals `displayTitle` so
+ * legacy consumers that only read `game.name` keep working.
+ */
+export interface GamePresentation extends GameMeta {
+  steamName: string | null;
+  customTitle: string | null;
+  displayTitle: string;
+  titleSource: TitleSource;
+  /** 0 when title.json is absent; null when the file is unreadable/corrupt. */
+  titleRevision: number | null;
+  titleUpdatedAt: string | null;
+  titleEditable: boolean;
+  coverUrl: string | null;
+  coverPlaceholder: string;
+  warnings: string[];
+}
+
+/** Persisted at <dataDir>/<appid>/title.json (schema v1). */
+export interface GameTitleOverride {
+  schemaVersion: 1;
+  appid: number;
+  customTitle: string | null;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface TitleUpdateRequest {
+  customTitle: string | null;
+  expectedRevision: number;
+}
+
+export interface TitleUpdateResult {
+  game: GamePresentation;
+  changed: boolean;
+}
+
 export interface TokenUsage {
   input: number;
   output: number;
@@ -113,7 +154,7 @@ export interface ReportHint {
 
 export interface PreviewResult {
   appid: number;
-  game: GameMeta;
+  game: GamePresentation;
   summary: SteamSummary;
   steamMatchingTotal: number;
   clientFilterNotice: string;
@@ -366,14 +407,25 @@ export interface KpiWindows {
   sources: { last30d: KpiSource; last90d: KpiSource };
 }
 
-export interface DatasetListItem {
+/**
+ * Public dataset integrity value required by the feature contract. The
+ * internal storage status remains 'complete'/'corrupted' and is translated at
+ * the response boundary.
+ */
+export type PublicDatasetStatus = '完整' | '损坏';
+
+export interface DatasetSummary {
   appid: number;
-  game: string;
+  game: GamePresentation;
   reviewsHash: string;
   reviewCount: number;
-  fetchedAt: string;
+  fetchedAt: string | null;
   trendCoverage?: { start: string; end: string };
   reportCount: number;
+  sizeBytes: number;
+  /** Retained for older frontends that read `bytes`. */
   bytes: number;
-  status: 'complete' | 'corrupted';
+  status: PublicDatasetStatus;
 }
+
+export type DatasetListItem = DatasetSummary;

@@ -1,12 +1,13 @@
 import type { ServerConfig } from '../lib/config';
 import type { Logger } from '../lib/logger';
-import { silentLogger } from '../lib/logger';
-import { AppError, toAppError } from '../lib/errors';
+import { redact, silentLogger } from '../lib/logger';
+import { AppError, publicCodeFor, toAppError } from '../lib/errors';
 import type { CreateJobRequest, DatasetMeta, GameMeta, KpiWindows, Report, Review, SteamSummary, TrendDataset } from '../types';
 import type { SteamService } from '../steam/service';
 import { DeepSeekProvider, baseUrlHost, type AIProvider } from '../ai/deepseek';
 import { PROMPT_VERSION } from '../ai/prompts';
 import { buildAnalysisHash, cloneReportWithServed, readReport, rebuildTopReviewsFromDataset, saveReport } from '../storage/report';
+import { presentReportForApp } from '../storage/presentation';
 import {
   buildReviewsHash,
   readDataset,
@@ -15,6 +16,7 @@ import {
   updateDatasetMeta,
   writeDataset,
 } from '../storage/dataset';
+import { captureStorageEpoch } from '../storage/lock';
 import { anchorMonthOf, buildTrendHash, computeTrend } from '../steam/trend';
 import { computeRollingKpis } from '../steam/kpi';
 import { RequestBudget } from '../steam/budget';
@@ -61,18 +63,65 @@ export class JobManager {
     this.now = deps.now ?? Date.now;
   }
 
-  createJob(request: CreateJobRequest, apiKey: string, dataDir: string): CreateJobResult {
-    const record = this.store.create({ request, apiKey, dataDir });
+  async createJob(request: CreateJobRequest, apiKey: string, dataDir: string): Promise<CreateJobResult> {
+    // Capture the storage epoch before the job can write anything. A clear-all
+    // that happens later bumps the epoch and cancels all of this job's writes.
+    const storageEpoch = await captureStorageEpoch(dataDir);
+    const record = this.store.create({ request, apiKey, dataDir, storageEpoch });
     void this.run(record);
     return { jobId: record.id };
   }
 
-  getSnapshot(id: string) {
-    return this.store.snapshot(this.store.require(id));
+  async getSnapshot(id: string) {
+    const record = this.store.require(id);
+    const snapshot = this.store.snapshot(record);
+    if (record.report) {
+      // The snapshot always reflects the current title/version for the job's
+      // fixed data directory; the stored report on disk is never rewritten.
+      snapshot.report = await this.presentForCompletion(record.report, record.dataDir, record.request.appid);
+    }
+    return snapshot;
   }
 
   subscribe(id: string, listener: (event: JobEvent) => void): () => void {
-    return this.store.subscribe(id, listener);
+    const record = this.store.require(id);
+    let active = true;
+    const wrapped = (event: JobEvent): void => {
+      if (!active) return;
+      if (event.type !== 'done') {
+        listener(event);
+        return;
+      }
+      const report = (event.data as { report?: Report } | null)?.report;
+      if (!report) {
+        listener(event);
+        return;
+      }
+      // Late subscribers and live clients must both see the same presentation
+      // rule as the report endpoint. Re-resolve asynchronously so the SSE
+      // handler is not blocked; ordering is preserved because `done` is final.
+      // If presentation fails (security violation or report assembly failure),
+      // never replay the cached report: a client would receive a success event
+      // with a stale title. Send an explicit failure event instead; the SSE
+      // route ends the stream on `error`.
+      void this.presentForCompletion(report, record.dataDir, record.request.appid)
+        .then((presented) => {
+          if (active) listener({ type: 'done', data: { report: presented } });
+        })
+        .catch((err) => {
+          if (!active) return;
+          const appErr = toAppError(err);
+          listener({
+            type: 'error',
+            data: { code: publicCodeFor(appErr.code), message: appErr.displayMessage },
+          });
+        });
+    };
+    const unsubscribe = this.store.subscribe(id, wrapped);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }
 
   cancel(id: string): void {
@@ -81,6 +130,34 @@ export class JobManager {
 
   getReport(id: string): Report {
     return this.store.getReport(id);
+  }
+
+  /**
+   * Serve a completed job report with the title that is current *now*. The
+   * snapshot and SSE done event carry the presentation resolved at completion
+   * time; this endpoint re-reads only title.json/game.json so a rename after
+   * completion is reflected without rewriting the stored report.
+   * The data directory is the one fixed at job creation and cannot be
+   * overridden by the request.
+   */
+  async getServedReport(id: string): Promise<Report> {
+    const record = this.store.require(id);
+    if (record.status !== 'completed' || !record.report) {
+      throw new AppError('JOB_NOT_COMPLETED', '任务尚未完成或已取消');
+    }
+    return this.presentForCompletion(record.report, record.dataDir, record.request.appid);
+  }
+
+  private async presentForCompletion(report: Report, dataDir: string, appid: number): Promise<Report> {
+    // Title/game-file degradations (corrupt, permission, I/O) are handled by
+    // the unified presentation resolver, which returns a complete presentation
+    // object with warnings. A missing/corrupt game.json falls back to the
+    // dataset metadata or the report's own original Steam metadata, so clearing
+    // a custom title restores the real automatic name instead of the AppID
+    // placeholder. Anything that still throws here is a security violation or
+    // a genuine assembly failure; it must surface as such rather than silently
+    // serving the cached report with an outdated title.
+    return presentReportForApp(dataDir, appid, report);
   }
 
   private counters(): { steamRequests: number; cacheHits: number } {
@@ -111,6 +188,14 @@ export class JobManager {
     // disk write after the job has been cancelled.
     const ensureActive = () => {
       if (record.abort.signal.aborted || record.status === 'cancelled') throw new AppError('CANCELLED');
+    };
+    // A clear-all bumps the storage epoch. Any write carrying the old epoch is
+    // rejected by the unified lock; this check additionally prevents a job that
+    // only reuses existing data from "completing" against a cleared directory.
+    const ensureStorageEpoch = async () => {
+      if ((await captureStorageEpoch(dataDir)) !== record.storageEpoch) {
+        throw new AppError('CANCELLED', '数据目录已被清空，任务已取消');
+      }
     };
 
     try {
@@ -196,6 +281,7 @@ export class JobManager {
             summary: result.summary,
           },
           result.reviews,
+          { epoch: record.storageEpoch },
         );
         store.log(record, 'info', `抓取完成：${reviews.length} 条，${result.pages} 页，端点 ${result.sourceEndpoint}`);
         store.update(record, {
@@ -239,7 +325,7 @@ export class JobManager {
           refresh: forceTrend,
           now: new Date(this.now()),
         });
-        await saveTrend(dataDir, request.appid, trend);
+        await saveTrend(dataDir, request.appid, trend, { epoch: record.storageEpoch });
         store.log(record, 'info', `趋势获取完成：${trend.points.length} 个月（${trend.source}）`);
       }
       store.update(record, {
@@ -317,7 +403,7 @@ export class JobManager {
       if (aggregatesDirty) {
         aggregatesComputedAt = nowIso();
         const nextMeta: DatasetMeta = { ...meta, allTimeSummary, rollingKpis, aggregatesComputedAt };
-        const committed = await updateDatasetMeta(dataDir, nextMeta);
+        const committed = await updateDatasetMeta(dataDir, nextMeta, { epoch: record.storageEpoch });
         if (committed) {
           meta = committed;
         } else {
@@ -372,9 +458,11 @@ export class JobManager {
               progress: 98,
               message: '复用本地分析结果',
             });
-            store.complete(record, served);
+            await ensureStorageEpoch();
+            store.complete(record, await this.presentForCompletion(served, dataDir, request.appid));
             return;
           } catch (err) {
+            if (err instanceof AppError && err.code === 'CANCELLED') throw err;
             store.log(
               record,
               'warn',
@@ -453,9 +541,12 @@ export class JobManager {
 
       store.update(record, { stage: 'saving', progress: 98, message: '保存报告' });
       ensureActive();
-      await saveReport(dataDir, request.appid, analysisHash, report);
+      await saveReport(dataDir, request.appid, analysisHash, report, { epoch: record.storageEpoch });
       store.log(record, 'info', `报告已保存：${analysisHash}`);
-      store.complete(record, report);
+      await ensureStorageEpoch();
+      // Disk keeps the fetched/analysis game metadata; only the served copy
+      // (snapshot + SSE done.report) carries the current title presentation.
+      store.complete(record, await this.presentForCompletion(report, dataDir, request.appid));
     } catch (err) {
       if (record.status === 'cancelled' || record.abort.signal.aborted) {
         if (record.status !== 'cancelled') {
@@ -464,8 +555,33 @@ export class JobManager {
         return;
       }
       const appErr = toAppError(err);
-      this.logger.warn('job failed', { jobId: record.id, code: appErr.code });
-      store.fail(record, { code: appErr.code, message: appErr.displayMessage, ...(appErr.detail ? { detail: appErr.detail } : {}) });
+      if (appErr.code === 'CANCELLED') {
+        // Cancelled by the user or invalidated by clear-all. Either way the job
+        // is cancelled, not failed.
+        const latest = this.store.get(record.id);
+        if (latest && latest.status !== 'cancelled') this.store.cancel(record.id);
+        return;
+      }
+      this.logger.warn('job failed', { jobId: record.id, code: appErr.code, detail: appErr.detail });
+      // Public detail is an allow-listed Chinese explanation when the error
+      // provides one. Otherwise a known (non-INTERNAL) AppError may carry a
+      // provider/filesystem diagnostic; pass it only after the same secret and
+      // path redaction used for logs, so a redacted upstream key remains
+      // observable (security regression test) without leaking secrets or
+      // absolute paths. Unknown INTERNAL exception text never leaves the server.
+      const safeDetail =
+        !appErr.publicDetail && appErr.code !== 'INTERNAL' && appErr.detail
+          ? redact(appErr.detail)
+          : undefined;
+      store.fail(record, {
+        code: appErr.code,
+        message: appErr.displayMessage,
+        ...(appErr.publicDetail
+          ? { detail: appErr.publicDetail }
+          : safeDetail
+            ? { detail: safeDetail }
+            : {}),
+      });
     }
   }
 }

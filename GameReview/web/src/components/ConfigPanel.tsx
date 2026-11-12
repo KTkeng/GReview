@@ -248,6 +248,8 @@ export function ConfigPanel({
           historicalReport={historicalReport}
           forceFetch={forceFetch}
           forceAnalyze={forceAnalyze}
+          game={preview.result?.game ?? game}
+          appid={preview.result?.appid ?? appid}
           onToggleDataset={(next) => updateConfig({ reuseDataset: next })}
           onToggleReport={(next) => updateConfig({ reuseReport: next })}
           onRefetch={onRefetch}

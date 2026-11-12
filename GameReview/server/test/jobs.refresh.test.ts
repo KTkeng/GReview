@@ -215,10 +215,10 @@ function request(
 }
 
 async function runJob(h: Harness, req: CreateJobRequest): Promise<JobSnapshot> {
-  const { jobId } = h.manager.createJob(req, 'sk-test-refresh', h.dataDir);
+  const { jobId } = await h.manager.createJob(req, 'sk-test-refresh', h.dataDir);
   const started = Date.now();
   for (;;) {
-    const snapshot = h.manager.getSnapshot(jobId);
+    const snapshot = await h.manager.getSnapshot(jobId);
     if (snapshot.status === 'completed' || snapshot.status === 'failed' || snapshot.status === 'cancelled') {
       return snapshot;
     }

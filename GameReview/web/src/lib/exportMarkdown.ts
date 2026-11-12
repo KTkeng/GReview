@@ -1,4 +1,6 @@
-import type { Report, Theme } from '../types';
+import type { Report, ReportSource, Theme } from '../types';
+import { api } from './api';
+import { gameTitleInfo } from './gameTitle';
 import {
   ANALYSIS_SOURCE_LABELS,
   CONFIDENCE_LABELS,
@@ -20,6 +22,19 @@ function escapeCell(value: string): string {
 
 function escapeInline(value: string): string {
   return value.replace(/\r?\n/g, ' ');
+}
+
+/**
+ * 标题按纯文本处理：转义 Markdown 结构字符与 HTML 特殊字符，
+ * 防止自定义标题改变导出结构或注入 HTML。
+ */
+function escapeHeading(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/([`*_{}[\]()#+\-.!|~])/g, '\\$1')
+    .replace(/\r?\n/g, ' ');
 }
 
 function themeSection(title: string, themes: Theme[], lines: string[]): void {
@@ -61,10 +76,10 @@ function themeSection(title: string, themes: Theme[], lines: string[]): void {
  */
 export function buildMarkdown(report: Report): string {
   const lines: string[] = [];
-  const gameName = report.game?.name || `AppID ${report.game?.appid ?? ''}`.trim();
+  const title = gameTitleInfo(report.game, report.game?.appid);
   const isLocalReport = report.methodology?.analysisSource === 'local_report';
 
-  lines.push(`# GReview 报告：${escapeInline(gameName)}`, '');
+  lines.push(`# GReview 报告：${escapeHeading(title.displayTitle)}`, '');
   lines.push(`- 分析时间：${formatDateTime(report.generatedAt)}`);
   lines.push(`- 游戏 AppID：${report.game?.appid ?? '—'}`);
   if (report.methodology?.aiModel) {
@@ -186,6 +201,14 @@ export function buildMarkdown(report: Report): string {
 
   /* 方法论 */
   lines.push('## 方法与局限', '');
+  if (title.isCustom) {
+    lines.push(
+      `- 游戏标题：${escapeHeading(title.customTitle ?? '')}（Steam 原名：${escapeHeading(
+        title.steamName ?? '未获取',
+      )}）`,
+      '',
+    );
+  }
   const m = report.methodology;
   if (m) {
     lines.push(`- ${escapeInline(m.note ?? '')}`, '');
@@ -254,7 +277,8 @@ export function safeFilename(name: string): string {
 }
 
 export function markdownFilename(report: Report): string {
-  const name = safeFilename(report.game?.name || `app-${report.game?.appid ?? 'report'}`);
+  const title = gameTitleInfo(report.game, report.game?.appid);
+  const name = safeFilename(title.displayTitle || `app-${report.game?.appid ?? 'report'}`);
   const date = new Date(report.generatedAt);
   const valid = !Number.isNaN(date.getTime());
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -266,9 +290,7 @@ export function markdownFilename(report: Report): string {
   return `GReview-${name}-${stamp}.md`;
 }
 
-export function downloadMarkdown(report: Report): string {
-  const content = buildMarkdown(report);
-  const filename = markdownFilename(report);
+function saveTextFile(content: string, filename: string): string {
   const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -279,4 +301,39 @@ export function downloadMarkdown(report: Report): string {
   document.body.removeChild(anchor);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   return filename;
+}
+
+/** 使用当前展示报告在本地生成 Markdown 并下载（新任务报告没有 analysisHash 时使用）。 */
+export function downloadMarkdown(report: Report): string {
+  return saveTextFile(buildMarkdown(report), markdownFilename(report));
+}
+
+/**
+ * 导出 Markdown：历史报告优先调用 GET /api/reports/:appid/:analysisHash?format=markdown，
+ * 由后端按当前展示报告生成（不直接返回旧 Markdown 快照），文件名固定由
+ * AppID 与 analysisHash 生成。新任务报告没有 analysisHash 时退回本地渲染，
+ * 标题仍来自同一 GamePresentation。
+ */
+export async function downloadReportMarkdown(
+  report: Report,
+  source?: ReportSource,
+): Promise<string> {
+  if (source && Number.isSafeInteger(source.appid) && source.appid > 0 && source.analysisHash) {
+    try {
+      const markdown = await api.getReportMarkdown(
+        source.appid,
+        source.analysisHash,
+        source.dataDir,
+      );
+      if (markdown.trim()) {
+        return saveTextFile(
+          markdown,
+          `GReview-${source.appid}-${source.analysisHash}.md`,
+        );
+      }
+    } catch {
+      // 旧后端不支持 format=markdown 或报告已不存在时，退回当前展示报告。
+    }
+  }
+  return downloadMarkdown(report);
 }

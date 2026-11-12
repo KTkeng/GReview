@@ -11,10 +11,23 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/(x-deepseek-key["':=\s]+)[^"',\s}]+/gi, '$1***'],
 ];
 
-/** Redact credentials and bearer tokens from any string before it reaches a log sink. */
+/**
+ * Filesystem paths may reveal unconfigured/unauthorised directories, so
+ * diagnostics log them as placeholders. URLs (https://host/path) are left
+ * intact because the POSIX pattern requires a path segment immediately after
+ * a single slash.
+ */
+const PATH_PATTERNS: Array<[RegExp, string]> = [
+  [/[A-Za-z]:[\\/][^\s"',;}]*/g, '<path>'],
+  [/\\\\[^\s"',;}]+/g, '<path>'],
+  [/(^|[\s"'(=:])\/(?:[^\s"'/]+\/)+[^\s"',;}]*/g, '$1<path>'],
+];
+
+/** Redact credentials, bearer tokens and filesystem paths from any log string. */
 export function redact(value: string): string {
   let out = value;
   for (const [pattern, replacement] of SECRET_PATTERNS) out = out.replace(pattern, replacement);
+  for (const [pattern, replacement] of PATH_PATTERNS) out = out.replace(pattern, replacement);
   return out;
 }
 

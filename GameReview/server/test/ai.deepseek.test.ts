@@ -3,6 +3,7 @@ import {
   DeepSeekProvider,
   buildChatBody,
   parseJsonLoose,
+  requestTimeoutMs,
   validateBaseUrl,
   baseUrlHost,
 } from '../src/ai/deepseek';
@@ -130,7 +131,9 @@ describe('DeepSeek error mapping', () => {
         })) as unknown as typeof fetch,
       { timeoutMs: 20 },
     );
-    await expect(p.chatJson(request)).rejects.toThrow('AI_TIMEOUT');
+    // Thinking requests have a 300s floor; use a non-thinking request here so
+    // the 20ms timeout actually fires.
+    await expect(p.chatJson({ ...request, thinking: false })).rejects.toThrow('AI_TIMEOUT');
   });
 
   it('propagates caller cancellation as CANCELLED', async () => {
@@ -363,5 +366,255 @@ describe('DeepSeek cancellation boundaries', () => {
     expect(bodies).toHaveLength(2);
     expect(bodies[1].thinking).toEqual({ type: 'enabled' });
     expect(bodies[1].temperature).toBe(0);
+  });
+});
+
+/** A DeepSeek thinking response whose reasoning consumed the whole max_tokens. */
+function truncatedChatResponse(reasoning = 'long chain of thought', prompt = 10, completion = 128): Response {
+  return jsonResponse({
+    choices: [
+      {
+        message: { role: 'assistant', content: '', reasoning_content: reasoning },
+        finish_reason: 'length',
+      },
+    ],
+    usage: { prompt_tokens: prompt, completion_tokens: completion },
+  });
+}
+
+describe('DeepSeek thinking output budget', () => {
+  it('escalates max_tokens when thinking consumes the whole output budget', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let calls = 0;
+    const p = provider((async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      calls += 1;
+      if (calls === 1) return truncatedChatResponse();
+      return jsonResponse({
+        choices: [{ message: { role: 'assistant', content: '{"ok":true}' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 20 },
+      });
+    }) as unknown as typeof fetch);
+
+    const result = await p.chatJson<{ ok: boolean }>({ ...request, maxTokens: 8192, thinking: true });
+
+    expect(result.data).toEqual({ ok: true });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].max_tokens).toBe(8192);
+    expect(bodies[1].max_tokens).toBe(16384);
+    // Thinking must stay enabled; a silent downgrade would change semantics.
+    expect(bodies[1].thinking).toEqual({ type: 'enabled' });
+    // Every paid attempt is accounted for.
+    expect(result.usage).toEqual({ input: 20, output: 148 });
+  });
+
+  it('escalates from the 64K thinking default to the 128K ceiling', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const p = provider((async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if (typeof body.max_tokens === 'number' && body.max_tokens < 131072) {
+        return truncatedChatResponse();
+      }
+      return chatResponse('{"ok":true}');
+    }) as unknown as typeof fetch);
+
+    const result = await p.chatJson<{ ok: boolean }>({ ...request, maxTokens: 65536, thinking: true });
+
+    expect(result.data).toEqual({ ok: true });
+    expect(bodies.map((b) => b.max_tokens)).toEqual([65536, 131072]);
+    expect(bodies[1].thinking).toEqual({ type: 'enabled' });
+  });
+
+  it('reuses the escalated budget on the JSON repair request', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let calls = 0;
+    const p = provider((async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      calls += 1;
+      if (calls === 1) return truncatedChatResponse();
+      if (calls === 2) return chatResponse('not valid json');
+      return chatResponse('{"ok":true}');
+    }) as unknown as typeof fetch);
+
+    const result = await p.chatJson<{ ok: boolean }>({ ...request, maxTokens: 8192, thinking: true });
+
+    expect(result.data).toEqual({ ok: true });
+    expect(bodies).toHaveLength(3);
+    expect(bodies[1].max_tokens).toBe(16384);
+    // The repair must not restart from the original 8192 budget.
+    expect(bodies[2].max_tokens).toBe(16384);
+    expect(bodies[2].thinking).toEqual({ type: 'enabled' });
+  });
+
+  it('falls back to the legacy max_tokens when a custom endpoint rejects 64K', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const p = provider((async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if (typeof body.max_tokens === 'number' && body.max_tokens > 8192) {
+        return jsonResponse({ error: { message: 'max_tokens is too large for this model' } }, 400);
+      }
+      return chatResponse('{"ok":true}');
+    }) as unknown as typeof fetch);
+
+    const result = await p.chatJson<{ ok: boolean }>({ ...request, maxTokens: 65536, thinking: true });
+
+    expect(result.data).toEqual({ ok: true });
+    expect(bodies.map((b) => b.max_tokens)).toEqual([65536, 8192]);
+    expect(bodies[1].thinking).toEqual({ type: 'enabled' });
+  });
+
+  it('does not escalate back into a rejected max_tokens range', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const p = provider((async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if (typeof body.max_tokens === 'number' && body.max_tokens > 8192) {
+        return jsonResponse({ error: { message: 'max_tokens exceeds the maximum' } }, 400);
+      }
+      return truncatedChatResponse();
+    }) as unknown as typeof fetch);
+
+    await expect(
+      p.chatJson({ ...request, maxTokens: 65536, thinking: true }),
+    ).rejects.toMatchObject({ code: 'AI_INVALID_RESPONSE' });
+    // A second escalation would send a value the endpoint already rejected.
+    expect(bodies.map((b) => b.max_tokens)).toEqual([65536, 8192]);
+  });
+
+  it('reports a clear truncation error when even the escalated budget is exhausted', async () => {
+    let calls = 0;
+    const p = provider((async () => {
+      calls += 1;
+      return truncatedChatResponse();
+    }) as unknown as typeof fetch);
+
+    try {
+      await p.chatJson({ ...request, maxTokens: 32768, thinking: true });
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AppError);
+      expect((err as AppError).code).toBe('AI_INVALID_RESPONSE');
+      expect(String((err as AppError).detail)).toMatch(/max_tokens|输出预算|截断/);
+    }
+    // initial request + two budget escalations
+    expect(calls).toBe(3);
+  });
+
+  it('gives thinking requests a longer timeout without changing non-thinking requests', () => {
+    expect(requestTimeoutMs(120000, { thinking: { type: 'enabled' } })).toBe(600000);
+    expect(requestTimeoutMs(120000, { thinking: { type: 'disabled' } })).toBe(120000);
+    expect(requestTimeoutMs(120000, {})).toBe(120000);
+    // After an endpoint rejects the thinking parameter the body no longer
+    // advertises it; the caller still forces the thinking floor.
+    expect(requestTimeoutMs(120000, {}, true)).toBe(600000);
+    // An explicitly larger configured timeout is never reduced.
+    expect(requestTimeoutMs(900000, { thinking: { type: 'enabled' } })).toBe(900000);
+  });
+
+  it('retries a transient insufficient_system_resource interruption', async () => {
+    let calls = 0;
+    const p = provider((async () => {
+      calls += 1;
+      if (calls === 1) {
+        return jsonResponse({
+          choices: [
+            {
+              message: { role: 'assistant', content: '', reasoning_content: 'interrupted' },
+              finish_reason: 'insufficient_system_resource',
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 100 },
+        });
+      }
+      return chatResponse('{"ok":true}');
+    }) as unknown as typeof fetch);
+
+    const result = await p.chatJson<{ ok: boolean }>({ ...request, thinking: true });
+
+    expect(result.data).toEqual({ ok: true });
+    expect(calls).toBe(2);
+    expect(result.usage).toEqual({ input: 20, output: 105 });
+  });
+
+  it('surfaces a clear interruption error after bounded transient retries', async () => {
+    let calls = 0;
+    const p = provider((async () => {
+      calls += 1;
+      return jsonResponse({
+        choices: [
+          { message: { role: 'assistant', content: '' }, finish_reason: 'aborted' },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 2 },
+      });
+    }) as unknown as typeof fetch);
+
+    try {
+      await p.chatJson({ ...request, thinking: true });
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AppError);
+      expect((err as AppError).code).toBe('AI_INVALID_RESPONSE');
+      expect(String((err as AppError).detail)).toMatch(/aborted|中断/);
+    }
+    // initial attempt + two transient retries
+    expect(calls).toBe(3);
+  });
+
+  it('does not retry a content_filter response', async () => {
+    let calls = 0;
+    const p = provider((async () => {
+      calls += 1;
+      return jsonResponse({
+        choices: [
+          { message: { role: 'assistant', content: '' }, finish_reason: 'content_filter' },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 2 },
+      });
+    }) as unknown as typeof fetch);
+
+    await expect(p.chatJson({ ...request, thinking: true })).rejects.toMatchObject({
+      code: 'AI_INVALID_RESPONSE',
+    });
+    expect(calls).toBe(1);
+  });
+});
+
+describe('DeepSeek response-body timeout', () => {
+  it('maps a timeout while reading the response body to AI_TIMEOUT', async () => {
+    const p = provider((async () => {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => {
+          const err = new Error('aborted while reading body');
+          err.name = 'AbortError';
+          throw err;
+        },
+      } as unknown as Response;
+    }) as unknown as typeof fetch);
+
+    await expect(p.chatJson(request)).rejects.toThrow('AI_TIMEOUT');
+  });
+
+  it('keeps caller cancellation ahead of the body-read timeout mapping', async () => {
+    const controller = new AbortController();
+    const p = provider((async () => {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => {
+          controller.abort();
+          const err = new Error('aborted by caller');
+          err.name = 'AbortError';
+          throw err;
+        },
+      } as unknown as Response;
+    }) as unknown as typeof fetch);
+
+    await expect(
+      p.chatJson({ ...request, thinking: false, signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'CANCELLED' });
   });
 });

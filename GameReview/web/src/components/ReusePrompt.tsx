@@ -1,6 +1,8 @@
-import type { ReusableDataset, ReusableReport } from '../types';
+import type { GameMeta, GamePresentation, ReusableDataset, ReusableReport } from '../types';
 import { formatRelativeTime } from '../lib/format';
+import { gameTitleInfo } from '../lib/gameTitle';
 import { Switch } from './ui';
+import { CustomTitleBadge } from './GameTitle';
 
 interface ReusePromptProps {
   reuseDataset: boolean;
@@ -14,6 +16,9 @@ interface ReusePromptProps {
   onToggleReport: (next: boolean) => void;
   onRefetch: () => void;
   onReanalyze: () => void;
+  /** 当前展示用游戏信息（预览结果或已解析游戏），用于显示 displayTitle。 */
+  game?: GameMeta | GamePresentation | string | null;
+  appid?: number | null;
 }
 
 export function ReusePrompt({
@@ -28,7 +33,12 @@ export function ReusePrompt({
   onToggleReport,
   onRefetch,
   onReanalyze,
+  game = null,
+  appid = null,
 }: ReusePromptProps) {
+  const title = gameTitleInfo(game, appid);
+  const hasGame = Boolean(game || appid);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div className="switch-row">
@@ -49,6 +59,18 @@ export function ReusePrompt({
             <span aria-hidden="true">●</span>
             复用本地数据：{dataset.reviewCount} 条，抓取于 {formatRelativeTime(dataset.fetchedAt)}
           </div>
+          {hasGame ? (
+            <>
+              <div className="reuse-title-line">
+                游戏：
+                <strong className="reuse-game-title">{title.displayTitle}</strong>
+                {title.isCustom ? <CustomTitleBadge /> : null}
+              </div>
+              {title.isCustom ? (
+                <div className="reuse-original-name">Steam 名称：{title.steamName ?? '未获取'}</div>
+              ) : null}
+            </>
+          ) : null}
           {dataset.trendCoverage?.start && dataset.trendCoverage?.end ? (
             <div>
               趋势覆盖：{dataset.trendCoverage.start} 至 {dataset.trendCoverage.end}
@@ -83,6 +105,18 @@ export function ReusePrompt({
             <span aria-hidden="true">●</span>
             使用本地分析结果，本次未消耗 token
           </div>
+          {hasGame ? (
+            <>
+              <div className="reuse-title-line">
+                游戏：
+                <strong className="reuse-game-title">{title.displayTitle}</strong>
+                {title.isCustom ? <CustomTitleBadge /> : null}
+              </div>
+              {title.isCustom ? (
+                <div className="reuse-original-name">Steam 名称：{title.steamName ?? '未获取'}</div>
+              ) : null}
+            </>
+          ) : null}
           <div>报告生成于 {formatRelativeTime(report.generatedAt)}</div>
           <div className="reuse-prompt-row">
             <span className="dim">如需尝试新模型或提示词，可重新分析。</span>

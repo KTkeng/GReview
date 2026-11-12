@@ -231,6 +231,8 @@ export class FakeAIProvider implements AIProvider {
   calls: AIChatRequest[] = [];
   response: unknown | ((req: AIChatRequest) => unknown);
   delayMs: number;
+  /** Test barrier: runs after the call is recorded, before the response. */
+  beforeCall?: (callIndex: number, req: AIChatRequest) => void | Promise<void>;
 
   constructor(response: unknown | ((req: AIChatRequest) => unknown) = SAMPLE_ANALYSIS, delayMs = 0) {
     this.response = response;
@@ -247,6 +249,8 @@ export class FakeAIProvider implements AIProvider {
 
   async chatJson<T = unknown>(req: AIChatRequest): Promise<AIChatResult<T>> {
     this.calls.push(req);
+    const callIndex = this.calls.length;
+    if (this.beforeCall) await this.beforeCall(callIndex, req);
     if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
     if (req.signal?.aborted) throw new AppError('CANCELLED');
     const data = typeof this.response === 'function' ? (this.response as (r: AIChatRequest) => unknown)(req) : this.response;
