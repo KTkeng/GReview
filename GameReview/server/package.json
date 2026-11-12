@@ -1,6 +1,6 @@
 {
   "name": "greview-server",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "description": "GReview local-only backend: Steam review fetch, DeepSeek analysis, local datasets and reports.",

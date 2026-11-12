@@ -23,7 +23,7 @@ export interface ServerConfig {
   nodeEnv: string;
 }
 
-export const VERSION = '0.1.3';
+export const VERSION = '0.2.0';
 
 function intFromEnv(value: string | undefined, fallback: number): number {
   const n = Number(value);

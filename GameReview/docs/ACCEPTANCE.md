@@ -1,8 +1,9 @@
-# GReview v0.1.3 验收与已知问题
+# GReview v0.2.0 验收与已知问题
 
-- 日期：2026-11-06（2026-11-12 更新思考模式修复）
-- 版本：v0.1.3
-- 构建/测试：`npm test` 通过；后端 **235 passed / 1 skipped**，前端 **72 passed**；`npm run build`、`npm run lint` 均 exit 0。
+- 日期：2026-11-12
+- 版本：v0.2.0
+- 构建/测试：`npm test` 通过；后端 **288 passed / 5 skipped**，前端 **119 passed**；`npm run build`、`npm run lint` 均 exit 0。
+- CI：GitHub Actions `ubuntu-latest` + `windows-latest` 双平台通过（[run 43245171227](https://github.com/KTkeng/GReview/actions/runs/43245171227)）。
 - 真实 Steam + DeepSeek 端到端冒烟：需要使用者在本机填入自己的 Key 后验证。
 
 ## v0.1.2 修复
@@ -17,7 +18,14 @@
 - **Release 安装包**：`GReview-v0.1.3-windows.zip` 包含已构建的前端/后端、启动器和文档，解压后双击即可使用；用户不需要手动执行 npm 命令。
 - macOS/Linux 用户仍按 README 使用 `npm install` / `npm run dev`。
 
-## 2026-11-12 修复：思考模式分析失败
+## v0.2.0 新增
+
+- **自定义游戏标题**：本地数据面板支持编辑、保存、取消与恢复默认；标题持久化到 `data/<appid>/title.json`，独立于 Steam 元数据，不进入抓取/趋势/分析哈希。统一展示回退链为 `customTitle > steamName > AppID <id>`，报告、复用提示、Markdown 导出、任务完成与 SSE 使用同一名称；封面加载失败显示 AppID 占位。
+- **标题并发与安全**：`expectedRevision` 乐观并发、409 冲突保留用户草稿、原子写与统一存储锁、数据目录/链接隔离、同源 Origin/Host 校验。
+- **思考模式稳定性**：64K 思考预算、截断自动升档、600s 超时与中断重试，详见下节。
+- **双平台 CI**：新增 Ubuntu + Windows 矩阵；Windows 上 5 项符号链接/大小写权限用例按平台显式跳过，目录 junction 用例实际执行，Ubuntu CI 全部执行。
+
+### 思考模式分析失败
 
 - **根因**：DeepSeek 思考模式的 `reasoning_content` 与正文共享 `max_tokens`。此前各分析阶段固定 8192，开启思考后推理会把预算耗尽，接口以 HTTP 200 返回空 `content` 和 `finish_reason: "length"`；随后的 JSON 修复重试同样被思考耗尽，最终表现为 `AI_INVALID_RESPONSE`。
 - 思考模式下每阶段初始 `max_tokens` 对齐 DeepSeek 的 64K 思考默认值（65536）；`DeepSeekProvider` 检测到 `finish_reason: "length"` 后自动将预算翻倍（上限 131072），保留思考开关，不静默降级。
@@ -33,7 +41,7 @@
 - 构建、类型检查和自动化测试通过；集成测试不依赖真实 Steam/DeepSeek 网络。
 - 真实网络路径（Steam 请求、DeepSeek 调用、浏览器打印）需要本机环境验证。
 
-## 已知问题（v0.1.3，不阻塞正常使用）
+## 已知问题（v0.2.0，不阻塞正常使用）
 
 1. **Steam 串行调度的取消穿透**（`server/src/steam/client.ts`，major）
    排队节点被取消时会提前释放队列位置，可能让后续请求越过仍在执行的请求。正常低并发使用不受影响；高并发/取消场景需修。
@@ -52,8 +60,9 @@
 
 ## 其他已知限制
 
-- Windows 上有 1 项文件符号链接测试按平台权限显式跳过；目录 junction 测试已执行。
-- 生产主 JS chunk 约 784 KB（gzip 263 KB），超过 Vite 500 KB 警告阈值；不影响构建。
+- Windows 上有 5 项符号链接/大小写权限测试按平台显式跳过；目录 junction 测试已执行；Ubuntu CI 全部执行。
+- 生产主 JS chunk 约 795 KB（gzip 266 KB），超过 Vite 500 KB 警告阈值；不影响构建。
+- 按用户要求在三模型后端复审后停止，未单独运行 Fable 前端验收；前端自动化测试、构建与双平台 CI 已通过。
 - 6 项前端验收点（真实 Steam、真实 DeepSeek、浏览器兼容性、打印、无障碍工具、性能监控）标记为 deferred，需真实环境验证。
 - 内部验收报告不随公开仓库发布；本文件是公开的验收摘要。
 

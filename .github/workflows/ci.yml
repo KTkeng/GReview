@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/custom-game-title]
+    branches: [main]
   pull_request:
 
 jobs:
