@@ -26,11 +26,60 @@ function tmpDir(): string {
   return dir;
 }
 
+/**
+ * Remove a test temp tree without ever following a symbolic link or a Windows
+ * directory junction. `fs.rmSync(dir, { recursive: true, force: true })` is
+ * not reliable on Windows once the tree contains links: it can fail with
+ * ENOTEMPTY after visiting the link target. Walking with lstat lets us delete
+ * the link entry itself (unlink, or rmdir for Windows directory links) and
+ * never the directory it points at.
+ */
+function removeTreeSync(target: string): void {
+  let stat: ReturnType<typeof fs.lstatSync>;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+
+  if (stat.isSymbolicLink()) {
+    try {
+      fs.unlinkSync(target);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      // A Windows directory symlink/junction may reject unlink with
+      // EPERM/EACCES/EISDIR; rmdir removes the link entry itself and never
+      // traverses the target.
+      if (code !== 'EPERM' && code !== 'EACCES' && code !== 'EISDIR' && code !== 'ENOTDIR') throw err;
+      fs.rmdirSync(target, { maxRetries: 10, retryDelay: 50 });
+    }
+    return;
+  }
+
+  if (stat.isDirectory()) {
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(target);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
+    }
+    for (const entry of entries) removeTreeSync(path.join(target, entry));
+    // Every child (including link entries) is gone before the parent is removed.
+    fs.rmdirSync(target, { maxRetries: 10, retryDelay: 50 });
+    return;
+  }
+
+  fs.rmSync(target, { force: true, maxRetries: 10, retryDelay: 50 });
+}
+
 afterEach(() => {
   resetTitleFsOpsForTests();
   setContainedReadOpenErrorForTests(null);
   setDataDirProbeErrorForTests(null);
-  for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of tmpDirs.splice(0)) removeTreeSync(dir);
 });
 
 function errno(code: string, message: string): NodeJS.ErrnoException {
