@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { JobState } from '../types';
-import { canonicalStage, STAGE_LABELS, STAGE_SEQUENCE } from '../lib/defaults';
+import { canonicalStage } from '../lib/defaults';
+import { LIVE_STAGE_SEQUENCE, liveStageDisplayLabel, resolveLiveStage } from '../lib/stageMap';
 import { formatNumber } from '../lib/format';
 import { ErrorBanner, InlineNotice } from './ui';
 import { IconStop } from './Icon';
+import { LiveVizPanel } from './liveviz/LiveVizPanel';
+import { useLiveVizPref } from '../hooks/useLiveVizPref';
 
 interface ProgressPanelProps {
   job: JobState;
@@ -12,19 +15,16 @@ interface ProgressPanelProps {
   onAdjustFilters: () => void;
   /** 可选：提供“清除 Steam 短期缓存”操作（STEAM_* 错误时显示）。 */
   onClearCache?: () => void;
+  /** SSE 连接状态；断线时实时可视化标题栏显示恢复提示。 */
+  connection?: 'connected' | 'disconnected';
+  /** 本任务曾断线并已恢复；实时可视化显示过程可能缺失提示。 */
+  recovered?: boolean;
 }
 
 function clampProgress(value: number): number {
   if (!Number.isFinite(value)) return 0;
   const normalized = value > 0 && value < 1 ? value * 100 : value;
   return Math.max(0, Math.min(100, normalized));
-}
-
-function stageIndex(stage: string | undefined): number {
-  const canonical = canonicalStage(stage);
-  if (!canonical) return -1;
-  if (canonical === 'done' || canonical === 'completed') return STAGE_SEQUENCE.length;
-  return STAGE_SEQUENCE.findIndex((item) => item.key === canonical);
 }
 
 function stageDetail(stage: string | undefined, job: JobState): string | null {
@@ -87,13 +87,22 @@ export function ProgressPanel({
   onRetry,
   onAdjustFilters,
   onClearCache,
+  connection = 'connected',
+  recovered = false,
 }: ProgressPanelProps) {
   const [logsOpen, setLogsOpen] = useState(true);
   const logRef = useRef<HTMLPreElement>(null);
+  // 与 LiveVizPanel 共享同一份展开偏好：展开时隐藏旧的日志区，避免重复展示。
+  const liveVizPref = useLiveVizPref();
   const cancelled = job.cancelled || job.status === 'cancelled';
   const failed = job.status === 'failed' || Boolean(job.error);
   const progress = clampProgress(job.progress);
-  const currentIndex = stageIndex(job.stage);
+  // 旧阶段列表与 LiveVizPanel 时间线共用 stageMap 的阶段顺序与中文名，
+  // 避免同屏出现两套阶段文案（STAGE_LABELS 与 LIVE_STAGE_LABELS）。
+  const liveCurrentKey = resolveLiveStage(job.stage, job.message);
+  const liveCurrentIndex = liveCurrentKey
+    ? LIVE_STAGE_SEQUENCE.findIndex((stage) => stage.key === liveCurrentKey)
+    : -1;
 
   useEffect(() => {
     if (logRef.current) {
@@ -103,7 +112,7 @@ export function ProgressPanel({
 
   if (cancelled) {
     return (
-      <section className="progress-panel" aria-live="polite">
+      <section className="progress-panel">
         <div className="cancelled-state">
           <span className="badge badge-warning">已取消</span>
           <h2 style={{ fontSize: 20, fontWeight: 600 }}>任务已取消</h2>
@@ -119,6 +128,13 @@ export function ProgressPanel({
             </button>
           </div>
         </div>
+        <LiveVizPanel
+          job={job}
+          connection={connection}
+          recovered={recovered}
+          expanded={liveVizPref.expanded}
+          onToggle={liveVizPref.toggle}
+        />
       </section>
     );
   }
@@ -155,6 +171,13 @@ export function ProgressPanel({
             <InlineNotice tone="warning">{hint}</InlineNotice>
           </div>
         ) : null}
+        <LiveVizPanel
+          job={job}
+          connection={connection}
+          recovered={recovered}
+          expanded={liveVizPref.expanded}
+          onToggle={liveVizPref.toggle}
+        />
       </section>
     );
   }
@@ -162,12 +185,14 @@ export function ProgressPanel({
   const percentText = `${progress.toFixed(0)}%`;
 
   return (
-    <section className="progress-panel" aria-live="polite" aria-busy="true">
+    <section className="progress-panel">
       <div className="progress-head">
         <div>
           <h2>正在分析</h2>
-          <p className="small muted" aria-live="polite">
-            {STAGE_LABELS[job.stage ?? 'queued'] ?? job.stage ?? '排队中'}
+          {/* 进度播报由 LiveVizPanel 的 aria-live 里程碑负责，避免重复朗读；
+              因此外层不再使用 aria-busy，避免屏蔽 aria-live 区域内的重要播报。 */}
+          <p className="small muted">
+            {liveStageDisplayLabel(job.stage, job.message)}
             {job.message ? ` · ${job.message}` : ''}
           </p>
         </div>
@@ -187,24 +212,35 @@ export function ProgressPanel({
         <div className="progress-fill" style={{ width: `${progress}%` }} />
       </div>
 
-      <div className="stage-list" aria-label="分析阶段">
-        {STAGE_SEQUENCE.map((stage, index) => {
-          const isDone = currentIndex > index;
-          const isCurrent = currentIndex === index && !isDone;
-          const className = `stage-item${isDone ? ' done' : ''}${isCurrent ? ' current' : ''}`;
-          const detail = isCurrent ? stageDetail(stage.key, job) : null;
-          return (
-            <div key={stage.key} className={className}>
-              <span className="stage-dot" aria-hidden="true">
-                {isDone ? '✓' : isCurrent ? '●' : index + 1}
-              </span>
-              <span>{stage.label}</span>
-              {detail ? <span className="stage-detail">{detail}</span> : null}
-              {isCurrent ? <span className="stage-detail">进行中</span> : null}
-            </div>
-          );
-        })}
-      </div>
+      <LiveVizPanel
+        job={job}
+        connection={connection}
+        recovered={recovered}
+        expanded={liveVizPref.expanded}
+        onToggle={liveVizPref.toggle}
+      />
+
+      {/* 实时可视化展开时已由时间线展示阶段状态，隐藏旧阶段列表避免同屏矛盾。 */}
+      {!liveVizPref.expanded ? (
+        <div className="stage-list" aria-label="分析阶段">
+          {LIVE_STAGE_SEQUENCE.map((stage, index) => {
+            const isDone = liveCurrentIndex > index;
+            const isCurrent = liveCurrentIndex === index;
+            const className = `stage-item${isDone ? ' done' : ''}${isCurrent ? ' current' : ''}`;
+            const detail = isCurrent ? stageDetail(job.stage, job) : null;
+            return (
+              <div key={stage.key} className={className}>
+                <span className="stage-dot" aria-hidden="true">
+                  {isDone ? '✓' : isCurrent ? '●' : index + 1}
+                </span>
+                <span>{stage.label}</span>
+                {detail ? <span className="stage-detail">{detail}</span> : null}
+                {isCurrent ? <span className="stage-detail">进行中</span> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div className="progress-meta">
         {typeof job.counts?.fetched === 'number' ? (
@@ -225,33 +261,36 @@ export function ProgressPanel({
         {job.jobId ? <span className="dim mono" style={{ fontSize: 11 }}>任务 {job.jobId}</span> : null}
       </div>
 
-      <div className="log-viewer">
-        <div className="log-viewer-head">
-          <span>实时日志</span>
-          <span className="spacer" />
-          <button
-            type="button"
-            className="btn-link"
-            onClick={() => setLogsOpen((prev) => !prev)}
-            aria-expanded={logsOpen}
-          >
-            {logsOpen ? '收起' : '展开'}
-          </button>
+      {/* 实时可视化展开时已显示日志流，隐藏旧日志区避免重复展示与重复朗读。 */}
+      {!liveVizPref.expanded ? (
+        <div className="log-viewer">
+          <div className="log-viewer-head">
+            <span>实时日志</span>
+            <span className="spacer" />
+            <button
+              type="button"
+              className="btn-link"
+              onClick={() => setLogsOpen((prev) => !prev)}
+              aria-expanded={logsOpen}
+            >
+              {logsOpen ? '收起' : '展开'}
+            </button>
+          </div>
+          {logsOpen ? (
+            <pre ref={logRef} aria-label="任务日志">
+              {job.logs.length === 0
+                ? '等待日志…'
+                : job.logs.map((entry, index) => (
+                    <span key={`${index}-${entry.message}`} className={`log-line ${entry.level}`}>
+                      {entry.at ? `[${new Date(entry.at).toLocaleTimeString('zh-CN')}] ` : ''}
+                      {entry.level ? `${entry.level.toUpperCase()} ` : ''}
+                      {entry.message}
+                    </span>
+                  ))}
+            </pre>
+          ) : null}
         </div>
-        {logsOpen ? (
-          <pre ref={logRef} aria-label="任务日志">
-            {job.logs.length === 0
-              ? '等待日志…'
-              : job.logs.map((entry, index) => (
-                  <span key={`${index}-${entry.message}`} className={`log-line ${entry.level}`}>
-                    {entry.at ? `[${new Date(entry.at).toLocaleTimeString('zh-CN')}] ` : ''}
-                    {entry.level ? `${entry.level.toUpperCase()} ` : ''}
-                    {entry.message}
-                  </span>
-                ))}
-          </pre>
-        ) : null}
-      </div>
+      ) : null}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button

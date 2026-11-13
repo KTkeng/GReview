@@ -400,12 +400,21 @@ export interface JobStreamHandlers {
     message?: string;
     counts?: Record<string, number | undefined>;
   }) => void;
-  onLog?: (payload: { level?: string; message?: string }) => void;
+  onLog?: (payload: {
+    level?: string;
+    message?: string;
+    /** 契约可选字段：优先作为日志时间，缺失时不伪造服务端时间。 */
+    timestamp?: string;
+    /** 契约可选字段：存在时用于断线恢复后的去重。 */
+    id?: string;
+  }) => void;
   onDone?: (payload: { report?: Report }) => void;
   onError?: (payload: { code?: string; message?: string; detail?: unknown }) => void;
   onCancelled?: () => void;
-  /** 连接断开（浏览器会自动重连）；用于触发状态快照恢复 */
+  /** 连接断开；前端先读 GET /api/jobs/:id 快照校准，再重建订阅 */
   onDisconnected?: () => void;
+  /** SSE 连接建立（首次连接或断线后恢复）；用于停止快照轮询。 */
+  onOpen?: () => void;
 }
 
 /**
@@ -433,7 +442,7 @@ export function subscribeJob(jobId: string, handlers: JobStreamHandlers): () => 
     if (payload) handlers.onStatus?.(payload);
   };
   const onLog = (event: MessageEvent) => {
-    const payload = parse<{ level?: string; message?: string }>(event);
+    const payload = parse<Parameters<NonNullable<JobStreamHandlers['onLog']>>[0]>(event);
     if (payload) handlers.onLog?.(payload);
   };
   const onDone = (event: MessageEvent) => {
@@ -453,6 +462,10 @@ export function subscribeJob(jobId: string, handlers: JobStreamHandlers): () => 
   const onConnectionError = () => {
     if (!closed) handlers.onDisconnected?.();
   };
+  const onOpen = () => {
+    if (!closed) handlers.onOpen?.();
+  };
+  source.addEventListener('open', onOpen);
 
   source.addEventListener('status', onStatus);
   source.addEventListener('log', onLog);

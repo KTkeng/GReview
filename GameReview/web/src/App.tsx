@@ -26,6 +26,7 @@ import { buildPreviewRequest, getMatchingTotal, getReuseInfo, previewConfigSlice
 import { downloadReportMarkdown } from './lib/exportMarkdown';
 import { formatNumber } from './lib/format';
 import { gameTitleInfo } from './lib/gameTitle';
+import { MAX_TIMELINE_LOG_CACHE } from './hooks/useJobTimeline';
 import { AppLayout } from './components/AppLayout';
 import { Header } from './components/Header';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -57,29 +58,51 @@ function normalizeLogLevel(level: string | undefined): JobLogEntry['level'] {
 
 function normalizeLogs(logs: Array<JobLogEntry | string> | undefined): JobLogEntry[] {
   if (!Array.isArray(logs)) return [];
-  return logs
-    .map((entry) => {
-      if (typeof entry === 'string') return { level: 'info' as const, message: entry };
-      if (!entry || typeof entry !== 'object') return null;
-      return {
-        level: normalizeLogLevel(entry.level),
-        message: String(entry.message ?? ''),
-        at: typeof entry.at === 'string' ? entry.at : undefined,
-      } satisfies JobLogEntry;
-    })
-    .filter((entry): entry is JobLogEntry => Boolean(entry && entry.message));
+  const result: JobLogEntry[] = [];
+  for (const entry of logs) {
+    if (typeof entry === 'string') {
+      if (entry) result.push({ level: 'info', message: entry });
+      continue;
+    }
+    if (!entry || typeof entry !== 'object') continue;
+    const message = String(entry.message ?? '');
+    if (!message) continue;
+    result.push({
+      level: normalizeLogLevel(entry.level),
+      message,
+      at: typeof entry.at === 'string' ? entry.at : undefined,
+      id: typeof entry.id === 'string' && entry.id ? entry.id : undefined,
+      observedAt: typeof entry.observedAt === 'string' ? entry.observedAt : undefined,
+    });
+  }
+  return result;
 }
 
-function mergeLogs(existing: JobLogEntry[], incoming: JobLogEntry[]): JobLogEntry[] {
+/**
+ * 合并日志：有服务端 id 时按 id 去重；没有 id 时保留重复文本
+ * （重试可能产生相同日志）。缓存最多 500 条并返回本次丢弃数量。
+ */
+function mergeLogs(
+  existing: JobLogEntry[],
+  incoming: JobLogEntry[],
+): { logs: JobLogEntry[]; dropped: number } {
   const result = [...existing];
-  const seen = new Set(existing.map((entry) => `${entry.level}|${entry.message}`));
+  const seenIds = new Set(
+    existing.map((entry) => entry.id).filter((id): id is string => Boolean(id)),
+  );
   for (const entry of incoming) {
-    const key = `${entry.level}|${entry.message}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (!entry.message) continue;
+    if (entry.id) {
+      if (seenIds.has(entry.id)) continue;
+      seenIds.add(entry.id);
+    }
     result.push(entry);
   }
-  return result.slice(-400);
+  const dropped = Math.max(0, result.length - MAX_TIMELINE_LOG_CACHE);
+  return {
+    logs: dropped > 0 ? result.slice(result.length - MAX_TIMELINE_LOG_CACHE) : result,
+    dropped,
+  };
 }
 
 function previewSignature(appid: number | null, config: AnalysisConfig): string {
@@ -135,7 +158,11 @@ export default function App() {
   const [forceFetch, setForceFetch] = useState(false);
   const [forceAnalyze, setForceAnalyze] = useState(false);
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-  const [version, setVersion] = useState('0.2.0');
+  /** SSE 连接状态：断线时实时可视化显示恢复徽标，轮询快照后重建流。 */
+  const [streamState, setStreamState] = useState<'connected' | 'disconnected'>('connected');
+  /** 当前任务是否发生过断线；恢复后提示过程可能未被完整记录，新 jobId 清除。 */
+  const [wasDisconnected, setWasDisconnected] = useState(false);
+  const [version, setVersion] = useState('0.2.1');
   const [applyingDataDir, setApplyingDataDir] = useState(false);
   const [dataDirApplyError, setDataDirApplyError] = useState<string | null>(null);
   const [dataDirMessage, setDataDirMessage] = useState<string | null>(null);
@@ -168,6 +195,11 @@ export default function App() {
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     };
   }, []);
+
+  /* 新 jobId 清除上一任务遗留的“曾断线”提示。 */
+  useEffect(() => {
+    setWasDisconnected(false);
+  }, [jobId]);
 
   /* 持久化配置（含 thinking 开关） */
   useEffect(() => {
@@ -445,6 +477,8 @@ export default function App() {
       };
 
       startedAppidRef.current = effectiveAppid;
+      setStreamState('connected');
+      setWasDisconnected(false);
       setJob({ status: 'queued', stage: 'queued', progress: 0, logs: [] });
       setPhase('analyzing');
 
@@ -454,6 +488,8 @@ export default function App() {
         setReport(null);
         setReportSource(null);
         setJobId(created.jobId);
+        setStreamState('connected');
+        setWasDisconnected(false);
         setJob({
           jobId: created.jobId,
           status: 'queued',
@@ -488,19 +524,33 @@ export default function App() {
     void startAnalysis();
   }, [startAnalysis]);
 
-  /* 任务轮询 + SSE 订阅 */
+  /* 首次快照 + SSE 订阅；断线后先读快照，再重建实时流（正常连接期间不轮询）。 */
   useEffect(() => {
     if (!jobId) return undefined;
+    const activeJobId = jobId;
     let disposed = false;
-    let transportClosed = false;
+    let finished = false;
+    let recovering = false;
     let timer: number | undefined;
     let closeSse: (() => void) | undefined;
+    /** SSE 事件版本号：用于丢弃校准期间已被更新事件覆盖的旧快照。 */
+    let eventRevision = 0;
+
+    const stopRecovery = () => {
+      recovering = false;
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+        timer = undefined;
+      }
+    };
 
     const finish = () => {
-      if (transportClosed) return;
-      transportClosed = true;
-      if (timer) window.clearInterval(timer);
+      if (finished) return;
+      finished = true;
+      stopRecovery();
       closeSse?.();
+      closeSse = undefined;
+      setStreamState('connected');
     };
 
     const loadReport = async (id: string) => {
@@ -524,8 +574,12 @@ export default function App() {
     };
 
     const applySnapshot = (snapshot: JobSnapshot) => {
-      if (disposed || transportClosed) return;
+      if (disposed || finished) return;
       const status = normalizeJobStatus(snapshot.status);
+      const snapshotLogs = Array.isArray(snapshot.logs) ? normalizeLogs(snapshot.logs) : null;
+      const snapshotOmitted = snapshotLogs
+        ? Math.max(0, snapshotLogs.length - MAX_TIMELINE_LOG_CACHE)
+        : 0;
       setJob((previous) => ({
         ...previous,
         jobId: snapshot.jobId ?? previous.jobId,
@@ -536,7 +590,14 @@ export default function App() {
             ? snapshot.progress
             : previous.progress,
         counts: snapshot.counts ?? previous.counts,
-        logs: snapshot.logs ? normalizeLogs(snapshot.logs) : previous.logs,
+        logs: snapshotLogs
+          ? snapshotLogs.slice(-MAX_TIMELINE_LOG_CACHE)
+          : previous.logs,
+        // 快照只带保留窗口内的日志；已累计丢弃的条数不能被快照清零，
+        // 取两者较大值，避免恢复后「已省略较早 N 条」偏小。
+        logOmitted: snapshotLogs
+          ? Math.max(snapshotOmitted, previous.logOmitted ?? 0)
+          : previous.logOmitted,
         message: snapshot.message ?? previous.message,
         error:
           snapshot.error ??
@@ -563,12 +624,29 @@ export default function App() {
       }
     };
 
-    const poll = async () => {
+    /**
+     * 读取一次快照。recovering=true 时在成功校准后重建 SSE（先快照、再实时流）。
+     * 若请求期间已收到更新的 SSE 事件，非终态快照会被丢弃。
+     */
+    const pollSnapshot = async (recoveringFromDisconnect: boolean) => {
+      const revisionAtRequest = eventRevision;
       try {
-        const snapshot = await api.getJob(jobId);
-        if (!disposed) applySnapshot(snapshot);
+        const snapshot = await api.getJob(activeJobId);
+        if (disposed || finished) return;
+        const status = normalizeJobStatus(snapshot.status);
+        const incomingTerminal =
+          status === 'completed' || status === 'failed' || status === 'cancelled';
+        const stale = revisionAtRequest !== eventRevision && !incomingTerminal;
+        if (!stale) {
+          applySnapshot(snapshot);
+          setBackendStatus('online');
+        }
+        if (recoveringFromDisconnect && recovering && !finished) {
+          stopRecovery();
+          connect();
+        }
       } catch (error) {
-        if (disposed) return;
+        if (disposed || finished) return;
         const apiError = toApiError(error);
         if (apiError.code === 'NETWORK_ERROR') {
           setBackendStatus('offline');
@@ -581,87 +659,137 @@ export default function App() {
           }));
           setPhase('error');
           finish();
+        } else {
+          // 500/INTERNAL 等：保留已有进度。只有断线恢复轮询才会继续重试；
+          // bootstrap 首次快照失败不会重试，文案不得写「正在重试」。
+          setJob((previous) => ({
+            ...previous,
+            message: recoveringFromDisconnect
+              ? '读取任务状态失败，正在重试…'
+              : '读取任务状态失败，等待实时连接同步',
+          }));
         }
       }
     };
 
-    closeSse = subscribeJob(jobId, {
-      onStatus: (payload) => {
-        if (disposed) return;
-        setJob((previous) => ({
-          ...previous,
-          status: previous.status === 'queued' ? 'running' : previous.status,
-          stage: payload.stage ?? previous.stage,
-          progress:
-            typeof payload.progress === 'number' && Number.isFinite(payload.progress)
-              ? payload.progress
-              : previous.progress,
-          counts: payload.counts ?? previous.counts,
-          message: payload.message ?? previous.message,
-        }));
-      },
-      onLog: (payload) => {
-        if (disposed) return;
-        setJob((previous) => ({
-          ...previous,
-          logs: mergeLogs(previous.logs, [
-            {
-              level: normalizeLogLevel(payload.level),
-              message: payload.message ?? '',
-              at: new Date().toISOString(),
-            },
-          ]),
-        }));
-      },
-      onDone: (payload) => {
-        if (disposed) return;
-        if (payload.report) {
-          setReport(payload.report);
-          setReportSource(null);
-          setPhase('completed');
-          setDatasetsRefreshKey((value) => value + 1);
-        } else {
-          void loadReport(jobId);
-        }
-        finish();
-      },
-      onError: (payload) => {
-        if (disposed) return;
-        setJob((previous) => ({
-          ...previous,
-          status: 'failed',
-          error: {
-            code: payload.code ?? 'ERROR',
-            message: payload.message ?? '任务失败',
-            detail: payload.detail,
-          },
-        }));
-        setPhase('error');
-        finish();
-      },
-      onCancelled: () => {
-        if (disposed) return;
-        setJob((previous) => ({
-          ...previous,
-          status: 'cancelled',
-          cancelled: true,
-          cancelRequested: false,
-        }));
-        finish();
-      },
-      onDisconnected: () => {
-        // 轮询仍在继续，断线后以 GET /api/jobs/:id 快照恢复
-      },
-    });
+    const startRecovery = () => {
+      if (disposed || finished || recovering) return;
+      recovering = true;
+      setWasDisconnected(true);
+      setStreamState('disconnected');
+      void pollSnapshot(true);
+      timer = window.setInterval(() => {
+        void pollSnapshot(true);
+      }, 2000);
+    };
 
-    void poll();
-    timer = window.setInterval(() => {
-      void poll();
-    }, 2000);
+    function connect() {
+      if (disposed || finished) return;
+      closeSse?.();
+      closeSse = subscribeJob(activeJobId, {
+        onOpen: () => {
+          if (disposed) return;
+          setStreamState('connected');
+        },
+        onStatus: (payload) => {
+          if (disposed || finished) return;
+          eventRevision += 1;
+          setStreamState('connected');
+          setJob((previous) => ({
+            ...previous,
+            status: previous.status === 'queued' ? 'running' : previous.status,
+            stage: payload.stage ?? previous.stage,
+            progress:
+              typeof payload.progress === 'number' && Number.isFinite(payload.progress)
+                ? payload.progress
+                : previous.progress,
+            // counts 按字段合并，阶段变化不清空已知计数；新 jobId 时由初始状态重置。
+            counts: { ...previous.counts, ...payload.counts },
+            message: payload.message ?? previous.message,
+          }));
+        },
+        onLog: (payload) => {
+          if (disposed || finished) return;
+          eventRevision += 1;
+          setStreamState('connected');
+          const entry: JobLogEntry = {
+            level: normalizeLogLevel(payload.level),
+            message: payload.message ?? '',
+            // 优先使用服务端时间/标识；缺失时不补写成服务端时间。
+            at: payload.timestamp,
+            id: payload.id,
+            observedAt: new Date().toISOString(),
+          };
+          setJob((previous) => {
+            const merged = mergeLogs(previous.logs, [entry]);
+            return {
+              ...previous,
+              logs: merged.logs,
+              logOmitted: (previous.logOmitted ?? 0) + merged.dropped,
+            };
+          });
+        },
+        onDone: (payload) => {
+          if (disposed || finished) return;
+          eventRevision += 1;
+          // 先落终态，时间线的 done 节点与「已完成」徽标才能在报告接管前出现；
+          // payload 不含 report、走 loadReport 的路径也能先显示 100%。
+          setJob((previous) => ({ ...previous, status: 'completed', progress: 100 }));
+          if (payload.report) {
+            setReport(payload.report);
+            setReportSource(null);
+            setPhase('completed');
+            setDatasetsRefreshKey((value) => value + 1);
+          } else {
+            void loadReport(activeJobId);
+          }
+          finish();
+        },
+        onError: (payload) => {
+          if (disposed || finished) return;
+          eventRevision += 1;
+          setJob((previous) => ({
+            ...previous,
+            status: 'failed',
+            error: {
+              code: payload.code ?? 'ERROR',
+              message: payload.message ?? '任务失败',
+              detail: payload.detail,
+            },
+          }));
+          setPhase('error');
+          finish();
+        },
+        onCancelled: () => {
+          if (disposed || finished) return;
+          eventRevision += 1;
+          setJob((previous) => ({
+            ...previous,
+            status: 'cancelled',
+            cancelled: true,
+            cancelRequested: false,
+          }));
+          finish();
+        },
+        onDisconnected: () => {
+          if (disposed || finished) return;
+          // 主动关闭当前流，先以 GET /api/jobs/:id 快照校准，再重建 SSE。
+          closeSse?.();
+          closeSse = undefined;
+          startRecovery();
+        },
+      });
+    }
+
+    const bootstrap = async () => {
+      await pollSnapshot(false);
+      if (!disposed && !finished) connect();
+    };
+    void bootstrap();
 
     return () => {
       disposed = true;
-      if (timer) window.clearInterval(timer);
+      stopRecovery();
       closeSse?.();
     };
   }, [jobId]);
@@ -922,6 +1050,8 @@ export default function App() {
       return (
         <ProgressPanel
           job={job}
+          connection={streamState}
+          recovered={wasDisconnected}
           onCancel={handleCancel}
           onRetry={handleRetryJob}
           onAdjustFilters={focusConfig}
@@ -944,6 +1074,8 @@ export default function App() {
         return (
           <ProgressPanel
             job={job}
+            connection={streamState}
+            recovered={wasDisconnected}
             onCancel={handleCancel}
             onRetry={handleRetryJob}
             onAdjustFilters={focusConfig}

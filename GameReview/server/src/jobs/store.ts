@@ -114,6 +114,7 @@ export class JobStore {
       status: record.status,
       stage: record.stage,
       progress: record.progress,
+      ...(record.message !== undefined ? { message: record.message } : {}),
       counts: { ...record.counts },
       logs: record.logs.map((l) => ({ level: l.level, message: l.message, at: l.at })),
       createdAt: record.createdAt,

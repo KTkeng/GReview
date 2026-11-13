@@ -174,7 +174,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
 
   if (chunks.length === 1) {
     ensureActive();
-    report('analyzing', 45, 'AI 整体分析中', { chunks: 1 });
+    report('analyzing', 45, 'AI 整体分析中', { chunks: 1, completed: 0 });
     const prompt = buildHolisticPrompt(sample, kpis, input.trend.points, input.includeTranslations);
     const result = await input.ai.chatJson({
       model: input.aiOptions.model,
@@ -187,7 +187,9 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
     });
     usage = addUsage(usage, result.usage);
     combined = parseWithStage(result.data, '整体分析');
-    report('analyzing', 85, 'AI 整体分析完成', { chunks: 1 });
+    // Count the holistic call as one successfully completed chunk only after
+    // its JSON parsed and passed schema validation.
+    report('analyzing', 85, 'AI 整体分析完成', { chunks: 1, completed: 1 });
   } else {
     const mapped: ParsedAnalysis[] = [];
     for (let i = 0; i < chunks.length; i += 1) {
@@ -208,11 +210,22 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
       });
       usage = addUsage(usage, result.usage);
       mapped.push(parseWithStage(result.data, `分块分析 ${i + 1}/${chunks.length}`));
+      // A chunk counts as completed exactly once, after its response parsed and
+      // passed schema validation. Provider-level retries/repairs still yield a
+      // single success here, so the count never double-adds a chunk.
+      report(
+        'analyzing',
+        40 + Math.round(((i + 1) / chunks.length) * 25),
+        `AI 分块分析 ${i + 1}/${chunks.length} 完成`,
+        { chunks: chunks.length, completed: i + 1 },
+      );
     }
 
     const combinedMap = mergeAnalyses(mapped);
     ensureActive();
-    report('analyzing', 70, 'AI 合并主题中', { chunks: chunks.length });
+    // Merge/final are not chunks: keep the task-level chunk total and the
+    // successful chunk count unchanged while these stages run.
+    report('analyzing', 70, 'AI 合并主题中', { chunks: chunks.length, completed: chunks.length });
     const mergePrompt = buildMergePrompt(combinedMap.themes, sample.length, input.includeTranslations);
     const mergeResult = await input.ai.chatJson({
       model: input.aiOptions.model,
@@ -231,7 +244,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
     // to the map themes rather than letting a bad final stage delete everything.
     const authoritativeThemes = hasUsableThemes(mergeThemes, sample) ? mergeThemes : combinedMap.themes;
 
-    report('analyzing', 80, 'AI 生成结论中', { chunks: chunks.length });
+    report('analyzing', 80, 'AI 生成结论中', { chunks: chunks.length, completed: chunks.length });
     ensureActive();
     const finalPrompt = buildFinalPrompt(authoritativeThemes, kpis, input.trend.points, input.includeTranslations);
     const finalResult = await input.ai.chatJson({
@@ -254,7 +267,7 @@ export async function analyzeReviews(input: AnalyzeInput): Promise<AnalyzeResult
       recommendations: final.recommendations,
       conclusion: final.conclusion,
     };
-    report('analyzing', 90, 'AI 分析完成', { chunks: chunks.length });
+    report('analyzing', 90, 'AI 分析完成', { chunks: chunks.length, completed: chunks.length });
   }
 
   ensureActive();

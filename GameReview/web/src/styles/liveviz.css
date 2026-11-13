@@ -1,0 +1,620 @@
+/* GReview —— AI 分析实时可视化（LiveVizPanel）
+ * 仅使用 tokens.css 中的设计变量；不引入图表库，全部为原生 CSS/SVG 样式。
+ * 变量与设计色值核对（tokens.css）：--bg #0B0F14、--bg-subtle #121821、
+ * --panel #1A2332、--border #1F2937、--text #E5E7EB、--text-secondary #94A3B8、
+ * --accent #38BDF8、--positive #22C55E、--negative #F87171、--warning #F59E0B、
+ * --accent-hover #0EA5E9、--border-strong #374151、--space-* 4/8/12/16/24/32px
+ * 均与 designTokens 一致；--warning-soft 为 #F59E0B 的 12% 透明变体。
+ */
+
+.live-viz {
+  --live-pending: #334155;
+  --live-skipped: #64748b;
+  min-width: 0;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* ---------- 标题栏 ---------- */
+
+.live-viz-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 44px;
+  padding: 8px var(--space-base);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.live-viz-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
+.live-viz-title h3 {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.live-viz-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+  flex: 0 0 auto;
+}
+
+.live-viz-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.live-viz-badge {
+  flex: 0 0 auto;
+}
+
+.live-viz-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: var(--radius);
+}
+
+.live-viz-toggle:focus-visible,
+.live-log-latest:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.live-viz-recovered {
+  margin: 0;
+  padding: 6px var(--space-base);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.live-viz-chevron {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1;
+  transition: transform 200ms ease;
+  transform: rotate(-90deg);
+}
+
+.live-viz-chevron.open {
+  transform: rotate(0deg);
+}
+
+/* ---------- 内容区 ---------- */
+
+.live-viz-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-base);
+  padding: var(--space-base);
+}
+
+/* 展开时 200ms 淡入。收起采用 hidden 立即移出布局与 Tab 顺序，
+ * 无法同时做高度过渡（延迟隐藏会让隐藏区内的按钮短暂仍可聚焦）。
+ * 产品取舍：可访问性优先，收起不做高度动画，箭头与展开淡入仍保留 200ms；
+ * prefers-reduced-motion 下全部关闭。 */
+.live-viz-body:not([hidden]) {
+  animation: live-viz-reveal 200ms ease;
+}
+
+/* 作者样式会覆盖 UA 的 [hidden]，必须显式隐藏并移出 Tab 顺序。 */
+.live-viz-body[hidden] {
+  display: none !important;
+}
+
+.live-viz-block {
+  min-width: 0;
+}
+
+.live-viz-block-title {
+  margin: 0 0 var(--space-sm);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* ---------- 阶段时间线 ---------- */
+
+.live-timeline {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 2px;
+  text-align: center;
+}
+
+/* 上一条节点到当前节点的连线（节点直径 12px，线 2px）。 */
+.live-stage::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: -50%;
+  width: 100%;
+  height: 2px;
+  background: var(--live-pending);
+  z-index: 0;
+}
+
+.live-stage:first-child::before {
+  display: none;
+}
+
+.live-stage.done::before,
+.live-stage.active::before,
+.live-stage.failed::before,
+.live-stage.cancelled::before {
+  background: var(--positive);
+}
+
+.live-stage.skipped::before {
+  background: var(--live-skipped);
+}
+
+.live-stage-dot {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--live-pending);
+  background: var(--bg-subtle);
+  color: #0b0f14;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.live-stage.active .live-stage-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.16);
+  animation: live-node-pulse 1.4s ease-in-out infinite;
+}
+
+.live-stage.done .live-stage-dot {
+  border-color: var(--positive);
+  background: var(--positive);
+}
+
+.live-stage.skipped .live-stage-dot {
+  border: 1px dashed var(--live-skipped);
+  background: transparent;
+}
+
+.live-stage.failed .live-stage-dot {
+  border-color: var(--negative);
+  background: var(--negative);
+  color: #1f0909;
+}
+
+.live-stage.cancelled .live-stage-dot {
+  border-color: var(--live-skipped);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+/* 未观察：从未收到该阶段事件，明确区别于「待开始」与「已完成」。 */
+.live-stage.unobserved .live-stage-dot {
+  border: 1px dashed var(--live-skipped);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.live-stage-label {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.live-stage.active .live-stage-label {
+  color: var(--text);
+}
+
+.live-stage.done .live-stage-label {
+  color: var(--text-secondary);
+}
+
+.live-stage-state {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.live-stage.active .live-stage-state {
+  color: var(--accent);
+}
+
+.live-stage.done .live-stage-state {
+  color: var(--positive);
+}
+
+.live-stage.skipped .live-stage-state {
+  color: var(--text-secondary);
+}
+
+.live-stage.failed .live-stage-state {
+  color: var(--negative);
+}
+
+.live-stage.cancelled .live-stage-state {
+  color: var(--text-secondary);
+}
+
+.live-stage.unobserved .live-stage-state {
+  color: var(--text-secondary);
+}
+
+/* ---------- AI 分块 ---------- */
+
+.live-chunks {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.live-chunk-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.live-chunk {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: #1f2937;
+  border: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.live-chunk.done {
+  background: var(--positive);
+  border-color: var(--positive);
+}
+
+.live-chunk.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: live-chunk-pulse 1.2s ease-in-out infinite;
+}
+
+.live-chunk-summary {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.live-chunk-empty {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* ---------- 当前阶段 ---------- */
+
+.live-current {
+  padding: var(--space-md);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.live-current-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.live-current-stage {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.live-current-percent {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.live-current-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.live-current-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-hover), var(--accent));
+  transition: width 300ms ease;
+}
+
+.live-current-message {
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.live-current-error {
+  margin-top: var(--space-xs);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--negative);
+}
+
+/* ---------- 日志流 ---------- */
+
+.live-log {
+  /* 色板内背景：页面背景 #0B0F14。 */
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.live-log-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 10px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+}
+
+.live-log-head .live-viz-block-title {
+  margin: 0;
+}
+
+.live-log-count {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.live-log-latest {
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.live-log-body {
+  height: 160px;
+  overflow-y: auto;
+  padding: 4px 0;
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overscroll-behavior: contain;
+}
+
+/* 日志滚动容器可聚焦（tabIndex=0），键盘用户可滚动查看历史日志。 */
+.live-log-body:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.live-log-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.live-log-line.info {
+  color: #94a3b8;
+}
+
+.live-log-line.debug {
+  color: var(--text-secondary);
+}
+
+.live-log-line.warn {
+  color: var(--warning);
+}
+
+.live-log-line.error {
+  color: var(--negative);
+}
+
+.live-log-level {
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: currentColor;
+}
+
+.live-log-message {
+  min-width: 0;
+}
+
+.live-log-empty,
+.live-log-omitted {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.live-log-omitted {
+  border-bottom: 1px dashed var(--border);
+}
+
+/* ---------- 可选计数 ---------- */
+
+.live-viz-counters {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.live-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: rgba(26, 35, 50, 0.7);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.live-counter-label {
+  color: var(--text-secondary);
+}
+
+.live-counter-value {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 窄屏：时间线纵向 ---------- */
+
+@media (max-width: 719px) {
+  .live-timeline {
+    grid-template-columns: 1fr;
+  }
+
+  .live-stage {
+    flex-direction: row;
+    align-items: center;
+    min-height: 28px;
+    gap: var(--space-sm);
+    padding: 2px 0;
+    text-align: left;
+  }
+
+  .live-stage::before {
+    top: -14px;
+    left: 5px;
+    width: 2px;
+    height: 26px;
+  }
+
+  .live-stage:first-child::before {
+    display: none;
+  }
+
+  .live-stage-label {
+    flex: 1 1 auto;
+  }
+
+  .live-stage-state {
+    margin-left: auto;
+    text-align: right;
+  }
+}
+
+/* ---------- 动效 ---------- */
+
+@keyframes live-viz-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes live-node-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.04);
+  }
+}
+
+@keyframes live-chunk-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5);
+  }
+  50% {
+    opacity: 0.65;
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-viz-body:not([hidden]),
+  .live-stage.active .live-stage-dot,
+  .live-chunk.active {
+    animation: none;
+  }
+
+  .live-chunk.active {
+    box-shadow: inset 0 0 0 2px rgba(56, 189, 248, 0.6);
+  }
+
+  .live-viz-chevron,
+  .live-current-fill {
+    transition: none;
+  }
+}

@@ -16,6 +16,7 @@ GReview 是一个**本地运行、自用、开源**的 Steam 评论分析工具�
 - **导出**：Markdown 下载；浏览器打印/另存为 PDF。
 - **本地数据复用**：抓取结果、趋势和报告自动保存；同条件再次分析默认复用，**不重复抓取、不重复消耗 token**。
 - **自定义游戏标题**：在“本地数据”面板直接编辑游戏标题；自定义名优先于 Steam 原名，元数据缺失时回退到 `AppID` 占位；报告、复用提示与导出统一使用该名称。
+- **AI 分析实时可视化**：分析进行中可展开/收起阶段时间线、AI 分块进度、当前阶段与日志流；默认展开，用户选择会记住。
 - **密钥安全**：DeepSeek Key 只存浏览器 `localStorage`，通过请求头发送，服务端只在任务内存中持有，结束/取消即清除。
 
 ## 快速开始
@@ -43,7 +44,7 @@ npm start
 
 ## Windows 一键启动
 
-从 [Releases](https://github.com/KTkeng/GReview/releases/latest) 下载 `GReview-v0.2.0-windows.zip`，解压后双击 `start-greview.bat`。
+从 [Releases](https://github.com/KTkeng/GReview/releases/latest) 下载 `GReview-v0.2.1-windows.zip`，解压后双击 `start-greview.bat`。
 
 - 首次运行会自动检查 Node.js 20+/npm、安装依赖，并打开浏览器。
 - 之后双击会直接启动；如果 GReview 已在运行，只会打开浏览器。
@@ -145,7 +146,7 @@ GameReview/
 
 ## 开发与验收
 
-- 自动化测试：后端 288 项 + 前端 119 项（当前版本；Windows 上有 5 项符号链接/大小写权限测试按平台显式跳过，Ubuntu CI 实际执行）。
+- 自动化测试：后端 297 项 + 前端 178 项（当前版本；Windows 上有 5 项符号链接/大小写权限测试按平台显式跳过，Ubuntu CI 实际执行）。
 - 真实网络冒烟（Steam + 真实 DeepSeek Key）需要使用者在本机执行；自动化测试不依赖真实网络。
 
 ## 反馈与问题上报

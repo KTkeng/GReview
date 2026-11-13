@@ -314,7 +314,10 @@ export interface JobCounts {
   target?: number;
   total?: number;
   pages?: number;
+  /** Task-level number of planned AI chunks; absent until chunk planning is done. */
   chunks?: number;
+  /** Chunks that completed successfully and passed parsing; retries never add twice. */
+  completed?: number;
   [key: string]: number | undefined;
 }
 
@@ -323,6 +326,8 @@ export interface JobSnapshot {
   status: JobStatus;
   stage: string;
   progress: number;
+  /** Short plain-text description of the current stage (same value as SSE status). */
+  message?: string;
   counts: JobCounts;
   logs: Array<{ level: string; message: string; at: string }>;
   createdAt: string;

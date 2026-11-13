@@ -1,9 +1,9 @@
-# GReview v0.2.0 验收与已知问题
+# GReview v0.2.1 验收与已知问题
 
-- 日期：2026-11-12
-- 版本：v0.2.0
-- 构建/测试：`npm test` 通过；后端 **288 passed / 5 skipped**，前端 **119 passed**；`npm run build`、`npm run lint` 均 exit 0。
-- CI：GitHub Actions `ubuntu-latest` + `windows-latest` 双平台通过（[run 43245171227](https://github.com/KTkeng/GReview/actions/runs/43245171227)）。
+- 日期：2026-11-13
+- 版本：v0.2.1
+- 构建/测试：`npm test` 通过；后端 **297 passed / 5 skipped**，前端 **178 passed**；`npm run build`、`npm run lint` 均 exit 0。
+- CI：push 后由 GitHub Actions `ubuntu-latest` + `windows-latest` 矩阵验证。
 - 真实 Steam + DeepSeek 端到端冒烟：需要使用者在本机填入自己的 Key 后验证。
 
 ## v0.1.2 修复
@@ -35,13 +35,27 @@
 - 自定义 Base URL 若拒绝 64K `max_tokens`（例如只支持 8K 的兼容端点），自动回退到 8192 并保持思考开启，不会再次升到被拒绝的区间。
 - 新增 13 项回归测试覆盖预算提升、64K→128K 升档、修复预算复用、截断错误、思考超时、正文读取超时、取消优先级、非思考预算、自定义端点回退与中断重试。
 
+## v0.2.1 新增
+
+- **AI 分析实时可视化**：分析进行中可在进度面板展开/收起阶段时间线、AI 分块进度、当前阶段与日志流；默认展开，用户选择写入 `localStorage`（`greview.liveviz.expanded`）。
+- **阶段时间线**：读取/抓取、趋势聚合、预处理、AI 分块 map、合并、最终总结、校验/报告；支持待开始、进行中、已完成、已跳过（复用本地）、未观察、失败、取消。
+- **分块进度**：使用后端 `counts.chunks/completed`；缺失显示「暂无分块数据」，非法显示「分块进度暂不可用」，前端不再自行补全。
+- **日志流**：自动滚动、回到最新、500 条缓存、渲染最近 200 条、超长截断；断线恢复提示；打印隐藏；reduced-motion 支持。
+- **后端只补进度字段**：`counts.completed`、快照 `message`，不新增接口或依赖；GPT-6 后端复审已 approve。
+- **已知边缘问题（不阻塞正常使用）**：
+  - 任务过期 404 时，进度视图可能切换到错误视图，未保留已显示的实时可视化。
+  - 断线恢复在并发快照请求下存在极小概率的重连竞态；`onOpen` 后未再次校准快照。
+  - 无障碍播报主要覆盖百分比里程碑，阶段变化和失败/取消分支的 `aria-live` 覆盖不足。
+  - 复用/跳过识别依赖后端中文 message 正则，后端改文案会失效。
+  - `LiveCounters` 保留休眠实现，仅当 `counts` 含 `themes/evidence/tokens` 时渲染。
+
 ## 验收状态
 
 - 本地只读/写接口、Steam 抓取、官方月度趋势聚合、DeepSeek 结构化分析、证据校验、本地数据集/报告复用、Markdown 导出与打印均已实现。
 - 构建、类型检查和自动化测试通过；集成测试不依赖真实 Steam/DeepSeek 网络。
 - 真实网络路径（Steam 请求、DeepSeek 调用、浏览器打印）需要本机环境验证。
 
-## 已知问题（v0.2.0，不阻塞正常使用）
+## 已知问题（v0.2.1，不阻塞正常使用）
 
 1. **Steam 串行调度的取消穿透**（`server/src/steam/client.ts`，major）
    排队节点被取消时会提前释放队列位置，可能让后续请求越过仍在执行的请求。正常低并发使用不受影响；高并发/取消场景需修。
@@ -61,8 +75,8 @@
 ## 其他已知限制
 
 - Windows 上有 5 项符号链接/大小写权限测试按平台显式跳过；目录 junction 测试已执行；Ubuntu CI 全部执行。
-- 生产主 JS chunk 约 795 KB（gzip 266 KB），超过 Vite 500 KB 警告阈值；不影响构建。
-- 按用户要求在三模型后端复审后停止，未单独运行 Fable 前端验收；前端自动化测试、构建与双平台 CI 已通过。
+- 生产主 JS chunk 约 813 KB（gzip 272 KB），超过 Vite 500 KB 警告阈值；不影响构建。
+- v0.2.1 的 LiveViz 经过 Fable 三轮验收，仍有上述 3 个 major 边缘问题未闭环；核心功能、178 项前端测试与构建通过。
 - 6 项前端验收点（真实 Steam、真实 DeepSeek、浏览器兼容性、打印、无障碍工具、性能监控）标记为 deferred，需真实环境验证。
 - 内部验收报告不随公开仓库发布；本文件是公开的验收摘要。
 

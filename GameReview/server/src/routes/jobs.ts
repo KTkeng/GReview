@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import type { ServerConfig } from '../lib/config';
+import { AppError, toAppError } from '../lib/errors';
 import type { JobManager } from '../jobs/manager';
 import type { JobEvent } from '../jobs/store';
 import { ensureDataDir } from '../storage/paths';
@@ -59,8 +60,17 @@ export function jobRoutes(deps: JobRouteDeps): Router {
   );
 
   router.get('/jobs/:id', asyncHandler(async (req, res) => {
-    const snapshot = await deps.manager.getSnapshot(req.params.id);
-    res.json(snapshot);
+    try {
+      const snapshot = await deps.manager.getSnapshot(req.params.id);
+      res.json(snapshot);
+    } catch (err) {
+      const appErr = toAppError(err);
+      // Missing/expired jobs keep their dedicated 404. Any other failure is a
+      // snapshot-recovery failure: the client keeps the progress it already
+      // shows and surfaces this stable message; details stay in server logs.
+      if (appErr.status < 500) throw appErr;
+      throw new AppError('INTERNAL', appErr.detail ?? appErr.message, '读取任务状态失败');
+    }
   }));
 
   router.get('/jobs/:id/stream', asyncHandler(async (req: Request, res: Response, next: NextFunction) => {

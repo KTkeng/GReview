@@ -294,15 +294,26 @@ export interface JobCounts {
   target?: number;
   matchingTotal?: number;
   chunks?: number;
+  /** 已完成并通过解析校验的分块数；重试不重复计数。 */
+  completed?: number;
   chunk?: number;
   totalChunks?: number;
+  /** 可选实时计数：仅在后端 counts 提供时渲染。 */
+  themes?: number;
+  evidence?: number;
+  tokens?: number;
   [key: string]: number | undefined;
 }
 
 export interface JobLogEntry {
   level: 'info' | 'warn' | 'error' | 'debug';
   message: string;
+  /** 服务端可选时间戳；缺失时不补写为服务端时间。 */
   at?: string;
+  /** 服务端可选日志标识；存在时用于断线恢复后的去重。 */
+  id?: string;
+  /** 浏览器接收时间，仅表示本页观察时间，不冒充服务端时间。 */
+  observedAt?: string;
 }
 
 export interface JobSnapshot {
@@ -427,6 +438,8 @@ export interface JobState {
   progress: number;
   counts?: JobCounts;
   logs: JobLogEntry[];
+  /** App 日志缓存（500 条）中已丢弃的累计条数，用于「已省略较早 N 条」。 */
+  logOmitted?: number;
   message?: string;
   error?: ApiErrorPayload;
   report?: Report;

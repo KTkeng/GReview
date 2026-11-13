@@ -33,7 +33,7 @@ Requires Node.js 20+.
 
 #### Windows one-click
 
-Download `GReview-v0.2.0-windows.zip` from [Releases](https://github.com/KTkeng/GReview/releases/latest), unzip it, and double-click `start-greview.bat`. The launcher checks Node.js 20+, installs dependencies on first run, starts GReview, and opens the browser.
+Download `GReview-v0.2.1-windows.zip` from [Releases](https://github.com/KTkeng/GReview/releases/latest), unzip it, and double-click `start-greview.bat`. The launcher checks Node.js 20+, installs dependencies on first run, starts GReview, and opens the browser.
 
 #### Manual
 
@@ -62,6 +62,7 @@ You need a [DeepSeek API key](https://platform.deepseek.com/). The key is stored
 - DeepSeek structured analysis: appeal points, friction points, expectation gaps, update impact, recommendations, and verified quotes.
 - Local dataset/report reuse: repeat analyses avoid re-fetching Steam and re-spending tokens.
 - Custom game titles for local datasets: name a game manually when Steam metadata is missing; reports, reuse prompts and exports use that name.
+- Collapsible real-time AI analysis visualization: stage timeline, chunk progress, current stage and logs while a job runs.
 - Markdown export and browser print-to-PDF.
 
 ### Documentation
@@ -110,7 +111,7 @@ README.md
 
 #### Windows 一键启动
 
-从 [Releases](https://github.com/KTkeng/GReview/releases/latest) 下载 `GReview-v0.2.0-windows.zip`，解压后双击 `start-greview.bat`。启动器会检查 Node.js 20+、首次运行自动安装依赖、启动 GReview 并打开浏览器。
+从 [Releases](https://github.com/KTkeng/GReview/releases/latest) 下载 `GReview-v0.2.1-windows.zip`，解压后双击 `start-greview.bat`。启动器会检查 Node.js 20+、首次运行自动安装依赖、启动 GReview 并打开浏览器。
 
 #### 手动启动
 
@@ -139,6 +140,7 @@ npm start
 - DeepSeek 结构化分析：吸引点、劝退点、预期落差、版本影响、可行动建议，并附经过校验的证据引用。
 - 本地数据集/报告复用：同条件再次分析不重复抓取 Steam、不重复消耗 token。
 - 本地数据集自定义游戏标题：Steam 元数据缺失时可手动命名；报告、复用提示与导出统一使用该名称。
+- 分析过程中的可折叠实时可视化：阶段时间线、AI 分块进度、当前阶段与日志流。
 - Markdown 导出与浏览器打印为 PDF。
 
 ### 文档

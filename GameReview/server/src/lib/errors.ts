@@ -82,7 +82,7 @@ const MESSAGES: Record<ErrorCode, string> = {
   APP_NOT_FOUND: '未找到该 Steam 游戏',
   NOT_FOUND: '资源不存在',
   GAME_NOT_FOUND: '本地游戏不存在',
-  JOB_NOT_FOUND: '任务不存在或已被清理',
+  JOB_NOT_FOUND: '任务不存在或已清理',
   NO_REVIEWS: '筛选后没有匹配的评论',
   STEAM_RATE_LIMITED: 'Steam 请求过于频繁，请稍后重试',
   AI_RATE_LIMITED: 'AI 服务请求过于频繁，请稍后重试',

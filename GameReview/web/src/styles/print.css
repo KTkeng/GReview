@@ -15,6 +15,8 @@
   .mobile-action-bar,
   .global-banner,
   .no-print,
+  /* 实时可视化仅用于分析进行中，打印预览中整块隐藏 */
+  .live-viz,
   .btn,
   .report-actions,
   .table-footer .btn,
